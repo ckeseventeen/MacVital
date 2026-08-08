@@ -66,7 +66,19 @@ build: project
 # self-signed cert carries no team identifier, so `CodeRequirement` still comes
 # back nil and the helper exits by design. See docs/SIGNING.md.
 build-selfsigned: project
-	@security find-identity -v -p codesigning | grep -q "$(IDENTITY)" || { \
+	@# `-v` (valid identities only) is deliberately NOT used here. A self-signed
+	@# root created in Certificate Assistant reports CSSMERR_TP_NOT_TRUSTED,
+	@# which drops it from the `-v` list — and the first version of this guard
+	@# therefore insisted the certificate did not exist while it sat right
+	@# there in the keychain.
+	@#
+	@# Trust is irrelevant to what this build wants. Trust governs *verifying*
+	@# a signature (Gatekeeper); it does not gate *making* one. codesign signs
+	@# happily with an untrusted identity, and the resulting requirement is
+	@# `certificate leaf = H"..."` — pinned to the certificate rather than the
+	@# executable's hash, which is the entire point: TCC grants then survive a
+	@# rebuild.
+	@security find-identity -p codesigning | grep -q "$(IDENTITY)" || { \
 		echo ""; \
 		echo "钥匙串里没有代码签名证书 \"$(IDENTITY)\"。"; \
 		echo "这个证书要在图形界面里建，命令行代替不了（约两分钟，只做一次）："; \
@@ -80,7 +92,7 @@ build-selfsigned: project
 		echo "  4. 一路「继续」，钥匙串选「登录」"; \
 		echo ""; \
 		echo "建好后跑这个确认："; \
-		echo "  security find-identity -v -p codesigning"; \
+		echo "  security find-identity -p codesigning"; \
 		echo ""; \
 		echo "已经有别的证书就用 IDENTITY=\"你的证书名\" 指定。说明见 docs/SIGNING.md。"; \
 		echo ""; \
@@ -148,7 +160,10 @@ verify-signing:
 		echo "✗ $(APP) 的包没有签名 —— 它永远无法获得完整磁盘访问权限。"; \
 		echo "  见 docs/SIGNING.md。"; exit 1; } || true
 	@codesign --verify --deep --strict "$(APP)" || { echo "✗ 签名校验失败"; exit 1; }
-	@echo "✓ 签名有效：$$(codesign -d -r- "$(APP)" 2>&1 | sed -n 's/^# designated => //p')"
+	@# Both spellings: ad-hoc prints "# designated => ", a certificate-signed
+	@# bundle prints "designated => " with no comment marker. Matching only the
+	@# first printed a cheerful "✓ 签名有效：" followed by nothing.
+	@echo "✓ 签名有效：$$(codesign -d -r- "$(APP)" 2>&1 | sed -n 's/^#* *designated => //p')"
 
 archive: project
 	xcodebuild -project $(PROJECT) -scheme $(SCHEME) -configuration Release \
