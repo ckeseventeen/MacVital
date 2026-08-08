@@ -40,6 +40,15 @@ struct UninstallPage: View {
             footer
         }
         .task { model.loadApps() }
+        // Quitting the app being uninstalled happens *outside* this window, so
+        // coming back to it is the moment to re-check. Without this the plan
+        // keeps reporting a process that exited minutes ago, and the lock looks
+        // permanent when it is not.
+        .onReceive(NotificationCenter.default.publisher(
+            for: NSApplication.didBecomeActiveNotification
+        )) { _ in
+            Task { await model.replan() }
+        }
         .alert(
             "卸载失败",
             isPresented: Binding(
@@ -203,6 +212,20 @@ struct UninstallPage: View {
                     .font(.system(size: 12))
                     .foregroundStyle(Theme.secondaryLabel)
                     .lineLimit(2)
+            // "Still running" is the one lock the user can clear, so it gets an
+            // action instead of a count. Everything else here is permanent and
+            // there is nothing to offer.
+            } else if let running = model.runningInstance, !model.inUseRows.isEmpty {
+                Label("\(model.inUseRows.count) 项被占用：「\(running.localizedName ?? model.selectedApp?.name ?? "该 App")」正在运行",
+                      systemImage: "exclamationmark.triangle.fill")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Theme.junk)
+
+                Button(model.isPlanning ? "正在重新检测…" : "退出它并重试") {
+                    Task { await model.quitRunningInstanceAndReplan() }
+                }
+                .controlSize(.small)
+                .disabled(model.isPlanning || model.isRemoving)
             } else if !model.deniedRows.isEmpty {
                 Label("\(model.deniedRows.count) 项被安全规则锁定", systemImage: "lock.fill")
                     .font(.system(size: 12))
