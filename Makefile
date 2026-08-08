@@ -71,8 +71,9 @@ build-selfsigned: project
 		echo "钥匙串里没有代码签名证书 \"$(IDENTITY)\"。"; \
 		echo "这个证书要在图形界面里建，命令行代替不了（约两分钟，只做一次）："; \
 		echo ""; \
-		echo "  1. 打开「钥匙串访问」"; \
-		echo "  2. 菜单栏「钥匙串访问」→ 证书助理 → 创建证书…"; \
+		echo "  1. 打开「钥匙串访问」（macOS 15 起已不在「实用工具」里）："; \
+		echo "     open \"/System/Library/CoreServices/Applications/Keychain Access.app\""; \
+		echo "  2. 点最左边的应用菜单「钥匙串访问」→ 证书助理 → 创建证书…"; \
 		echo "  3. 名称：$(IDENTITY)"; \
 		echo "     身份类型：自签名根证书"; \
 		echo "     证书类型：代码签名"; \

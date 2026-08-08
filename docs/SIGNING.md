@@ -45,8 +45,13 @@ designated => cdhash H"b9920cd9…" or cdhash H"01619073…"
 
 只解决 TCC 反复失效的问题，**不能让特权助手工作**（原因见下一节）。
 
-1. 打开「钥匙串访问」
-2. 菜单栏 →「钥匙串访问」→「证书助理」→「创建证书…」
+1. 打开「钥匙串访问」。**macOS 15 起它不在「实用工具」里了**，Spotlight 也未必搜得到，直接开：
+
+   ```bash
+   open "/System/Library/CoreServices/Applications/Keychain Access.app"
+   ```
+
+2. 点**最左边那个叫「钥匙串访问」的应用菜单**（不是「文件」也不是「编辑」）→「证书助理」→「创建证书…」
 3. 填：
    - 名称：`MacVital Local`
    - 身份类型：**自签名根证书**
