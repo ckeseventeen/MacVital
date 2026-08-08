@@ -259,11 +259,28 @@ struct UninstallRow: View {
                     .font(.system(size: 13))
                     .foregroundStyle(Theme.label)
                     .lineLimit(1)
+                    .opacity(row.isSelectable ? 1 : 0.55)
                 Text(row.candidate.item.abbreviatedPath)
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundStyle(Theme.tertiaryLabel)
                     .lineLimit(1)
                     .truncationMode(.middle)
+                    .opacity(row.isSelectable ? 1 : 0.55)
+
+                // The engine always explains itself, and "已锁定" alone is not
+                // that explanation. Hiding the reason in a hover tooltip meant
+                // the one row the user most wants explained — the one they
+                // cannot select — was the one row saying least. Most of these
+                // are "quit the app first", which is actionable the moment it
+                // is legible.
+                if !row.isSelectable {
+                    Text(row.decision.rationale)
+                        .font(.system(size: 11))
+                        .foregroundStyle(Theme.secondaryLabel)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.top, 1)
+                }
             }
 
             Spacer(minLength: 8)
@@ -278,7 +295,9 @@ struct UninstallRow: View {
                 .frame(width: 70, alignment: .trailing)
         }
         .padding(.vertical, 1)
-        .opacity(row.isSelectable ? 1 : 0.5)
+        // Dim what is unavailable, not the sentence explaining why. A blanket
+        // 0.5 over the whole row made the new rationale line the faintest text
+        // on screen.
         .contextMenu { Button("在访达中显示", action: reveal) }
     }
 }
