@@ -53,27 +53,15 @@ public enum HelperConstants {
 /// without a hardcoded team ID — and so a build signed with a different
 /// identity cannot talk to a helper installed by this one.
 public enum CodeRequirement {
-    public static func teamIdentifier() -> String? {
-        var code: SecCode?
-        guard SecCodeCopySelf([], &code) == errSecSuccess, let code else { return nil }
-        var staticCode: SecStaticCode?
-        guard SecCodeCopyStaticCode(code, [], &staticCode) == errSecSuccess, let staticCode else { return nil }
-        var info: CFDictionary?
-        guard SecCodeCopySigningInformation(staticCode, SecCSFlags(rawValue: kSecCSSigningInformation), &info) == errSecSuccess,
-              let dictionary = info as? [String: Any]
-        else { return nil }
-        return dictionary[kSecCodeInfoTeamIdentifier as String] as? String
-    }
-
     /// What the helper demands of anything connecting to it.
     public static func forClient() -> String? {
-        guard let team = teamIdentifier() else { return nil }
+        guard let team = CodeSignature.teamIdentifier() else { return nil }
         return requirement(identifier: HelperConstants.appBundleIdentifier, team: team)
     }
 
     /// What the app demands of the helper it connects to.
     public static func forHelper() -> String? {
-        guard let team = teamIdentifier() else { return nil }
+        guard let team = CodeSignature.teamIdentifier() else { return nil }
         return requirement(identifier: HelperConstants.helperBundleIdentifier, team: team)
     }
 

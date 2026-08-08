@@ -30,13 +30,19 @@ struct ScreenshotPage: View {
             }
         }
         .alert(
-            "截图出错",
+            shots.errorNeedsScreenRecording ? "缺少「屏幕录制」权限" : "截图出错",
             isPresented: Binding(
                 get: { shots.errorMessage != nil },
-                set: { if !$0 { shots.errorMessage = nil } }
+                set: { if !$0 { shots.clearError() } }
             )
         ) {
-            Button("好") { shots.errorMessage = nil }
+            if shots.errorNeedsScreenRecording {
+                Button("打开系统设置") {
+                    ScreenCapturePermission.openSettings()
+                    shots.clearError()
+                }
+            }
+            Button("好", role: .cancel) { shots.clearError() }
         } message: {
             Text(shots.errorMessage ?? "")
         }

@@ -65,11 +65,26 @@ final class ScreenshotService: ObservableObject {
 
     @Published private(set) var latest: Capture?
     @Published private(set) var isCapturing = false
-    @Published var errorMessage: String?
+    @Published private(set) var errorMessage: String?
+    /// Whether `errorMessage` is the Screen Recording one, so the alert can
+    /// offer the settings pane that actually fixes it.
+    @Published private(set) var errorNeedsScreenRecording = false
     @Published var delaySeconds: Int = 0
 
     private let scratch: URL = FileManager.default.temporaryDirectory
         .appendingPathComponent("MacVital-Screenshots", isDirectory: true)
+
+    // MARK: - Errors
+
+    func clearError() {
+        errorMessage = nil
+        errorNeedsScreenRecording = false
+    }
+
+    private func fail(_ message: String, needsScreenRecording: Bool = false) {
+        errorMessage = message
+        errorNeedsScreenRecording = needsScreenRecording
+    }
 
     // MARK: - Capture
 
@@ -77,6 +92,18 @@ final class ScreenshotService: ObservableObject {
         guard !isCapturing else { return }
         isCapturing = true
         defer { isCapturing = false }
+
+        // Preflight, because `screencapture` cannot tell us: when TCC denies
+        // it, it writes no file and exits 0 or 1 — byte for byte the same
+        // outcome as the user pressing esc, which the code below deliberately
+        // treats as a silent cancellation. Without this check a denial produces
+        // no message anywhere in the app, and the only clue is the system
+        // notification. This is also the call that registers the app in
+        // System Settings the first time round.
+        guard await ScreenCapturePermission.isGranted() else {
+            fail(ScreenCapturePermission.message, needsScreenRecording: true)
+            return
+        }
 
         try? FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
         let destination = scratch.appendingPathComponent("\(UUID().uuidString).png")
@@ -104,16 +131,17 @@ final class ScreenshotService: ObservableObject {
         }
 
         // Escape during an interactive capture exits cleanly and writes
-        // nothing. That is a cancellation, not a failure — say nothing.
+        // nothing. With the permission preflight above already passed, that is
+        // a cancellation rather than a failure — say nothing.
         guard FileManager.default.fileExists(atPath: destination.path) else {
             if status != 0 && status != 1 {
-                errorMessage = "截图失败（screencapture 退出码 \(status)）。"
+                fail("截图失败（screencapture 退出码 \(status)）。")
             }
             return
         }
 
         guard let image = NSImage(contentsOf: destination) else {
-            errorMessage = "截图已保存但无法读取。"
+            fail("截图已保存但无法读取。")
             return
         }
 
@@ -165,7 +193,7 @@ final class ScreenshotService: ObservableObject {
     func saveToDesktop(image: NSImage? = nil) -> URL? {
         guard let latest else { return nil }
         guard let desktop = FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask).first else {
-            errorMessage = "找不到桌面目录。"
+            fail("找不到桌面目录。")
             return nil
         }
 
@@ -182,7 +210,7 @@ final class ScreenshotService: ObservableObject {
         do {
             if let image {
                 guard let data = Self.pngData(from: image) else {
-                    errorMessage = "无法编码标注后的图片。"
+                    fail("无法编码标注后的图片。")
                     return nil
                 }
                 try data.write(to: target, options: .atomic)
@@ -191,7 +219,7 @@ final class ScreenshotService: ObservableObject {
             }
             return target
         } catch {
-            errorMessage = "保存失败：\(error.localizedDescription)"
+            fail("保存失败：\(error.localizedDescription)")
             return nil
         }
     }

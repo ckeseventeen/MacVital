@@ -251,16 +251,36 @@ struct SafetySettings: View {
 
             Section("权限") {
                 LabeledContent("完整磁盘访问") {
-                    switch environment.permissions.fullDiskAccess {
-                    case .granted: Label("已授权", systemImage: "checkmark.circle").foregroundStyle(.green)
-                    case .denied: Label("未授权", systemImage: "xmark.circle").foregroundStyle(.orange)
-                    case .unknown: Text("未知")
-                    }
+                    stateLabel(environment.permissions.fullDiskAccess)
                 }
-                Button("打开系统设置") { environment.permissions.openSystemSettings() }
+                LabeledContent("屏幕录制") {
+                    stateLabel(environment.permissions.screenRecording, unknown: "检测中…")
+                }
+                HStack {
+                    Button("完整磁盘访问…") { environment.permissions.openSystemSettings() }
+                    Button("屏幕录制…") { environment.permissions.openScreenRecordingSettings() }
+                }
+                if environment.permissions.grantsExpireOnRebuild {
+                    Text("这是 ad-hoc 签名的本地构建，授权绑在可执行文件的哈希上，重新编译即失效。用 make build-selfsigned 换成证书签名后就不用每次重新授权。")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
         }
         .formStyle(.grouped)
-        .onAppear { environment.permissions.refresh() }
+        .onAppear {
+            environment.permissions.refresh()
+            Task { await environment.permissions.refreshScreenRecording() }
+        }
+    }
+
+    @ViewBuilder
+    private func stateLabel(_ state: PermissionsCoordinator.State, unknown: String = "未知") -> some View {
+        switch state {
+        case .granted: Label("已授权", systemImage: "checkmark.circle").foregroundStyle(.green)
+        case .denied: Label("未授权", systemImage: "xmark.circle").foregroundStyle(.orange)
+        case .unknown: Text(unknown)
+        }
     }
 }

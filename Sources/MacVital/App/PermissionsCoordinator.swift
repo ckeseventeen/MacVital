@@ -34,16 +34,34 @@ final class PermissionsCoordinator: ObservableObject {
     /// reporting the truth.
     let mustRelaunchToTakeEffect = true
 
-    /// True when the running binary carries no team identifier, i.e. the
-    /// ad-hoc, linker-signed build that `make build` produces.
+    /// True when the running binary is ad-hoc signed, i.e. what `make build`
+    /// produces without a certificate.
     ///
     /// This matters more than it looks. TCC keys a grant on the app's
-    /// designated requirement; with no signing identity there is none, so it
-    /// falls back to recording the binary's cdhash. **Every recompile changes
-    /// the cdhash**, and the old grant stops applying — while the toggle in
-    /// System Settings still shows the app enabled. The user sees a switch
-    /// that is on and an app that says it has no access, and both are correct.
-    let isUnsignedBuild = CodeRequirement.teamIdentifier() == nil
+    /// designated requirement, and an ad-hoc signature has no certificate to
+    /// pin one to — so the requirement is the binary's cdhash. **Every
+    /// recompile changes the cdhash**, and the old grant stops applying while
+    /// the toggle in System Settings still shows the app enabled. The user
+    /// sees a switch that is on and an app that says it has no access, and
+    /// both are correct.
+    ///
+    /// This used to test `CodeRequirement.teamIdentifier() == nil`, which is a
+    /// different question with a different answer: a self-signed certificate
+    /// carries no team identifier yet still yields a stable
+    /// `certificate leaf = H"…"` requirement. That test reported every
+    /// `make build-selfsigned` build as unsigned and then told the user to
+    /// re-add the app after every build — precisely the advice that signing
+    /// with a certificate exists to make unnecessary.
+    let grantsExpireOnRebuild = CodeSignature.isAdHoc()
+
+    /// Screen Recording, which the capture pages need.
+    ///
+    /// Unlike Full Disk Access it is not bound at launch, so it can be
+    /// re-probed live — but macOS never *prompts* for it either. TCC refuses
+    /// to show a dialog for this service and posts a notification instead, so
+    /// an app that does not report the state itself leaves the user with
+    /// nothing to act on.
+    @Published private(set) var screenRecording: State = .unknown
 
     /// TCC-protected files, tried in order. Several, because none of them is
     /// guaranteed to exist: the per-user TCC database that older code probes
@@ -122,6 +140,16 @@ final class PermissionsCoordinator: ObservableObject {
         Log.app.notice("full disk access \(sawRefusal ? "denied" : "undetermined", privacy: .public)")
     }
 
+    /// Deliberately not folded into `refresh()`: this one is asynchronous, and
+    /// probing it while denied makes macOS post its "open System Settings"
+    /// notification. That is the right thing when the user has just asked
+    /// about permissions, and noise on every app activation.
+    func refreshScreenRecording() async {
+        let granted = await ScreenCapturePermission.isGranted()
+        screenRecording = granted ? .granted : .denied
+        Log.app.notice("screen recording \(granted ? "granted" : "denied", privacy: .public)")
+    }
+
     // MARK: - Actions
 
     func openSystemSettings() {
@@ -138,6 +166,11 @@ final class PermissionsCoordinator: ObservableObject {
             guard let url = URL(string: string) else { continue }
             if NSWorkspace.shared.open(url) { return }
         }
+    }
+
+    func openScreenRecordingSettings() {
+        didOpenSettings = true
+        ScreenCapturePermission.openSettings()
     }
 
     /// Full Disk Access is evaluated when a process launches; a running process

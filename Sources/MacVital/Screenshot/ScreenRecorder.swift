@@ -45,20 +45,6 @@ final class ScreenRecorder: NSObject, ObservableObject {
     private var frameSize: CGSize = .zero
     private let sampleQueue = DispatchQueue(label: "com.macvital.recorder.samples")
 
-    // MARK: - Permission
-
-    /// ScreenCaptureKit's own content query is the permission check: it throws
-    /// if Screen Recording has not been granted, and asking triggers the system
-    /// prompt exactly once.
-    static func hasPermission() async -> Bool {
-        do {
-            _ = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
-            return true
-        } catch {
-            return false
-        }
-    }
-
     // MARK: - Start
 
     func start(excluding ownWindow: NSWindow?) async {
@@ -224,14 +210,7 @@ final class ScreenRecorder: NSObject, ObservableObject {
     }
 
     private static func describe(_ error: Error) -> String {
-        let nsError = error as NSError
-        // SCStream reports a missing Screen Recording grant as a plain
-        // -3801 rather than anything nameable; translating it here is the
-        // difference between an actionable message and a hex code.
-        if nsError.domain == "com.apple.ScreenCaptureKit.SCStreamErrorDomain", nsError.code == -3801 {
-            return "没有「屏幕录制」权限。请到「系统设置 → 隐私与安全性 → 屏幕录制」中勾选 MacVital，然后重启 App。"
-        }
-        return error.localizedDescription
+        ScreenCapturePermission.isDenial(error) ? ScreenCapturePermission.message : error.localizedDescription
     }
 }
 

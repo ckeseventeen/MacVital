@@ -102,13 +102,14 @@ struct PermissionBanner: View {
                 )
 
                 // Only worth saying on a build that has no stable identity for
-                // TCC to key on — on a signed build the grant survives updates
-                // and this advice would be noise.
-                if permissions.isUnsignedBuild {
+                // TCC to key on —用证书签过名的构建授权本来就能跨重编译保留，
+                // 在那里说这段话只会把人推去做无谓的移除重加。
+                if permissions.grantsExpireOnRebuild {
                     BannerNote(
-                        "这是未签名的本地构建：macOS 只能按可执行文件的哈希记住授权，"
+                        "这是 ad-hoc 签名的本地构建：没有证书可以绑定，macOS 只能按可执行文件的哈希记住授权，"
                         + "而每次重新编译哈希都会变。如果设置里已经有 MacVital 却依然显示未获得，"
-                        + "请先用「−」把它移除，再重新添加当前这份 /Applications/MacVital.app。",
+                        + "请先用「−」把它移除，再重新添加当前这份 /Applications/MacVital.app。"
+                        + "改用 make build-selfsigned 可以一劳永逸。",
                         icon: "exclamationmark.triangle.fill"
                     )
                 }

@@ -257,11 +257,7 @@ final class LiveBroadcaster: NSObject, ObservableObject {
     }
 
     private static func describe(_ error: Error) -> String {
-        let nsError = error as NSError
-        if nsError.domain == "com.apple.ScreenCaptureKit.SCStreamErrorDomain", nsError.code == -3801 {
-            return "没有「屏幕录制」权限。请到「系统设置 → 隐私与安全性 → 屏幕录制」中勾选 MacVital，然后重启 App。"
-        }
-        return error.localizedDescription
+        ScreenCapturePermission.isDenial(error) ? ScreenCapturePermission.message : error.localizedDescription
     }
 
     private static func page(port: UInt16) -> String {
