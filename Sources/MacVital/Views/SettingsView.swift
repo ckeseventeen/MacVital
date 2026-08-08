@@ -45,6 +45,17 @@ struct GeneralSettings: View {
             }
 
             Section {
+                Toggle("关闭窗口后继续在后台运行", isOn: $settings.keepRunningInBackground)
+            } header: {
+                Text("后台")
+            } footer: {
+                Text("开启后关闭窗口不退出 App，菜单栏网速、屏幕画笔和隔离区到期清扫继续工作。点 Dock 图标或菜单栏的「打开 MacVital」可以随时把窗口叫回来，⌘Q 仍然是退出。关闭后恢复成关窗即退出。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Section {
                 Toggle("在菜单栏显示网速", isOn: $settings.showMenuBarSpeed)
                     .onChange(of: settings.showMenuBarSpeed) { _, _ in
                         environment.applyMenuBarSetting()

@@ -6,9 +6,19 @@ import MacVitalKit
 struct RootView: View {
     @EnvironmentObject private var environment: AppEnvironment
     @EnvironmentObject private var model: ScanViewModel
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         AppShell()
+            // Hand the AppKit side what it cannot reach on its own: the
+            // environment (for the lifecycle callbacks) and the scene's
+            // `openWindow` (the only way to rebuild a closed `Window`).
+            .onAppear {
+                AppDelegate.environment = environment
+                environment.registerMainWindowOpener {
+                    openWindow(id: MacVitalApp.mainWindowID)
+                }
+            }
             .sheet(isPresented: $environment.showConfirm) {
                 ConfirmSheet(isPresented: $environment.showConfirm)
                     .environmentObject(model)

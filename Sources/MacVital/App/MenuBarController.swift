@@ -165,13 +165,12 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
     // MARK: - Actions
 
+    /// Raising through `NSApp.windows` is not enough once the window can
+    /// actually be closed: with background residency the scene is torn down and
+    /// there is nothing left to raise, so this has to go through the
+    /// environment, which owns the scene's `openWindow` action.
     @objc private func openWindow() {
-        NSApp.activate(ignoringOtherApps: true)
-        // The single `Window` scene is already built; raising it is enough.
-        for window in NSApp.windows where window.canBecomeMain {
-            window.makeKeyAndOrderFront(nil)
-            return
-        }
+        environment?.showMainWindow()
     }
 
     @objc private func startScan() {

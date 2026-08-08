@@ -46,6 +46,13 @@ final class AppSettings: ObservableObject {
     @AppStorage("appearanceMode") var appearanceMode: AppearanceMode = .system
     @AppStorage("showMenuBarSpeed") var showMenuBarSpeed: Bool = true
     @AppStorage("showMenuBarPen") var showMenuBarPen: Bool = true
+    /// Closing the window leaves the app running instead of quitting it.
+    ///
+    /// On by default because half of what this app does is background work the
+    /// window is not needed for: the menu bar throughput readout, the screen
+    /// pen hotkey, and the quarantine sweep. Quitting on window close threw all
+    /// of that away every time the user tidied up their desktop.
+    @AppStorage("keepRunningInBackground") var keepRunningInBackground: Bool = true
     @AppStorage("advisorMode") var advisorMode: AdvisorMode = .offline
     @AppStorage("localModelEndpoint") var localModelEndpoint: String = "http://127.0.0.1:11434/api/chat"
     @AppStorage("localModelName") var localModelName: String = "qwen2.5:3b"

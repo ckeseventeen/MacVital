@@ -1,3 +1,4 @@
+import AppKit
 import Combine
 import Foundation
 import MacVitalKit
@@ -79,9 +80,42 @@ final class AppEnvironment: ObservableObject {
         )
     }
 
+    // MARK: - Main window
+
+    /// Reopening a closed `Window` scene needs the scene's own `openWindow`
+    /// action. Once the window is closed the scene is torn down and it is no
+    /// longer in `NSApp.windows`, so the AppKit route — `makeKeyAndOrderFront`
+    /// — has nothing to raise. `RootView` registers this while it exists.
+    private var mainWindowOpener: (() -> Void)?
+
+    func registerMainWindowOpener(_ open: @escaping () -> Void) {
+        mainWindowOpener = open
+    }
+
+    /// Bring the app back to the front, recreating the window if it was closed.
+    func showMainWindow() {
+        NSApp.activate(ignoringOtherApps: true)
+        // Still open, just buried: raising it keeps scroll position and any
+        // in-progress scan on screen, which recreating the scene would not.
+        if let window = NSApp.windows.first(where: { $0.canBecomeMain && $0.isVisible }) {
+            window.makeKeyAndOrderFront(nil)
+            return
+        }
+        mainWindowOpener?()
+    }
+
     // MARK: - Launch
 
+    /// Bootstrap is driven by the main window's `.task`, and with background
+    /// residency that window can be closed and reopened any number of times.
+    /// Re-running the launch sequence on every reopen would re-sweep the
+    /// quarantine and re-probe permissions for no reason.
+    private var didBootstrap = false
+
     func bootstrap() async {
+        guard !didBootstrap else { return }
+        didBootstrap = true
+
         permissions.refresh()
         helperStatus = helper.status()
         applyMenuBarSetting()
