@@ -73,7 +73,9 @@ make install
 
 `IDENTITY` 可以覆盖：`make build-selfsigned IDENTITY="你的证书名"`。
 
-装完仍需在完整磁盘访问权限里**移除旧条目再重新添加**一次——这是从 ad-hoc 换到证书的一次性代价，之后重新编译就不用再动了。
+装完仍需在完整磁盘访问权限和屏幕录制里**移除旧条目再重新添加**一次——这是从 ad-hoc 换到证书的一次性代价，之后重新编译就不用再动了。
+
+一次性代价还有一条：换签名方式之前构建出来的旧副本要删掉。TCC 会把 `com.macvital.MacVital` 解析到机器上某一份同名包再校验 requirement，留着一份 ad-hoc 签名的旧包，系统有机会拿它去校验，于是新证书带来的稳定 requirement 白给。`rm -rf build` 最省事；`make install` 也会在装完列出 requirement 与已装版本不一致的副本。
 
 ---
 

@@ -153,9 +153,9 @@ brew install xcodegen
 ```
 
 ```bash
-make test      # 单元测试
-make build     # 编译（ad-hoc 签名）
-make install   # 安装到 /Applications 并校验签名
+make test      # 单元测试（独立 scheme，不会构建 App）
+make build     # 编译（ad-hoc 签名，默认 Release）
+make install   # 装到 /Applications；装之前先校验构建产物的签名，不合格就中止
 make run       # 编译并启动
 make icon      # 从脚本重新生成 App 图标
 ```
@@ -176,7 +176,13 @@ make icon      # 从脚本重新生成 App 图标
 
 重启不是保守建议，是必须的：macOS 在**进程启动时**绑定这个权限，正在运行的进程不会感知到你刚打开的开关。所以横幅上的「重新检测」在授权后仍然显示未获得是正常的——它报的是当前进程的真实状态。
 
-> **ad-hoc 构建每次重装后都要重新授权一次。** requirement 基于 cdhash，重新编译就变。`make install` 会在装完提醒你。用证书签名可免除这一步——原理和步骤见 [docs/SIGNING.md](docs/SIGNING.md)。
+> **ad-hoc 构建每次重装后都要重新授权一次。** requirement 基于 cdhash，重新编译就变。`make install` 只在确实是 ad-hoc 签名时才提醒你重新授权——用证书签过名就不会再刷这段话。原理和步骤见 [docs/SIGNING.md](docs/SIGNING.md)。
+
+> **权限勾了却依然没用，先查有没有第二份 MacVital.app。** TCC 的授权绑定在 designated requirement 上，而 macOS 会把 `com.macvital.MacVital` 解析到机器上*某一份*同名包再去校验。如果构建目录里还躺着一份签名不同（或签名已损坏）的副本，系统可能拿它来校验，结果就是设置里开关是开的、App 却一直说没权限——两边都没说谎。`make install` 装完会自动扫描并列出 requirement 不一致的副本；手动查：
+>
+> ```bash
+> mdfind "kMDItemCFBundleIdentifier == 'com.macvital.MacVital'"
+> ```
 
 装完随时可以自查包签名是否有效（这一步能省掉一整场调试）：
 

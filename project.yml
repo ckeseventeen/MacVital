@@ -111,6 +111,26 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.macvital.MacVitalKitTests
 
 schemes:
+  # Tests get their own scheme so `xcodebuild test` never builds the app.
+  #
+  # Running them through the MacVital scheme produced an app bundle as a side
+  # effect — unsigned, because tests build unsigned by design — that still
+  # declared CFBundleIdentifier com.macvital.MacVital. macOS resolves that
+  # identifier to *some* bundle when checking a TCC requirement, and a second,
+  # unsigned copy is exactly how the app ends up denied Screen Recording with
+  # the switch in System Settings showing as on.
+  #
+  # MacVitalKitTests depends only on the static library, so nothing bundle-like
+  # is produced at all.
+  MacVitalKitTests:
+    build:
+      targets:
+        MacVitalKitTests: [test]
+    test:
+      config: Debug
+      targets:
+        - MacVitalKitTests
+
   MacVital:
     build:
       targets:
