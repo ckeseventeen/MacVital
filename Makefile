@@ -67,8 +67,23 @@ build: project
 # back nil and the helper exits by design. See docs/SIGNING.md.
 build-selfsigned: project
 	@security find-identity -v -p codesigning | grep -q "$(IDENTITY)" || { \
-		echo "钥匙串里找不到代码签名证书 \"$(IDENTITY)\"。"; \
-		echo "创建步骤见 docs/SIGNING.md，或用 IDENTITY=\"证书名\" 指定别的。"; exit 1; }
+		echo ""; \
+		echo "钥匙串里没有代码签名证书 \"$(IDENTITY)\"。"; \
+		echo "这个证书要在图形界面里建，命令行代替不了（约两分钟，只做一次）："; \
+		echo ""; \
+		echo "  1. 打开「钥匙串访问」"; \
+		echo "  2. 菜单栏「钥匙串访问」→ 证书助理 → 创建证书…"; \
+		echo "  3. 名称：$(IDENTITY)"; \
+		echo "     身份类型：自签名根证书"; \
+		echo "     证书类型：代码签名"; \
+		echo "  4. 一路「继续」，钥匙串选「登录」"; \
+		echo ""; \
+		echo "建好后跑这个确认："; \
+		echo "  security find-identity -v -p codesigning"; \
+		echo ""; \
+		echo "已经有别的证书就用 IDENTITY=\"你的证书名\" 指定。说明见 docs/SIGNING.md。"; \
+		echo ""; \
+		exit 1; }
 	xcodebuild -project $(PROJECT) -scheme $(SCHEME) -configuration $(CONFIG) \
 		-derivedDataPath $(DERIVED) CODE_SIGN_IDENTITY="$(IDENTITY)" \
 		CODE_SIGNING_REQUIRED=YES CODE_SIGNING_ALLOWED=YES \
