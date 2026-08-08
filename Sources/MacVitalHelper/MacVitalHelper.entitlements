@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- The helper is deliberately entitlement-free. It runs as root under
+	     launchd; it needs no sandbox exceptions, no library-validation
+	     override, and no automation permissions. Anything added here widens
+	     the blast radius of a compromise for no benefit. -->
+</dict>
+</plist>

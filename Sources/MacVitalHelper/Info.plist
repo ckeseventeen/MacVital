@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleIdentifier</key>
+	<string>com.macvital.helper</string>
+	<key>CFBundleName</key>
+	<string>MacVital Privileged Helper</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0.0</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<!-- Which apps are allowed to install and manage this helper. The runtime
+	     connection check is separate and stricter: see main.swift. -->
+	<key>SMAuthorizedClients</key>
+	<array>
+		<string>identifier "com.macvital.MacVital" and anchor apple generic and certificate leaf[subject.OU] = "ABCDE12345"</string>
+	</array>
+</dict>
+</plist>

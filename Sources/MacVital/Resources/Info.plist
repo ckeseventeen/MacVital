@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>zh_CN</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>MacVital</string>
+	<key>CFBundleDisplayName</key>
+	<string>MacVital</string>
+	<key>CFBundleIconName</key>
+	<string>AppIcon</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>$(MARKETING_VERSION)</string>
+	<key>CFBundleVersion</key>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>$(MACOSX_DEPLOYMENT_TARGET)</string>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.utilities</string>
+	<key>NSHumanReadableCopyright</key>
+	<string>MacVital</string>
+	<key>NSSupportsAutomaticTermination</key>
+	<false/>
+	<key>NSSupportsSuddenTermination</key>
+	<false/>
+	<!-- Shown in the Full Disk Access prompt. Say what it is for, in the
+	     user's terms — a vague string here is the difference between the
+	     permission being granted and the app being uninstalled. -->
+	<key>NSDesktopFolderUsageDescription</key>
+	<string>MacVital 需要读取桌面上的项目目录，才能找出 node_modules 等可重建的构建产物。</string>
+	<key>NSDocumentsFolderUsageDescription</key>
+	<string>MacVital 需要读取文稿中的项目目录，才能找出可重建的构建产物和重复文件。</string>
+	<key>NSDownloadsFolderUsageDescription</key>
+	<string>MacVital 需要读取下载目录，才能列出其中的大文件和重复文件。</string>
+	<key>NSRemovableVolumesUsageDescription</key>
+	<string>MacVital 需要访问外置磁盘，才能统计其中的大文件。</string>
+</dict>
+</plist>

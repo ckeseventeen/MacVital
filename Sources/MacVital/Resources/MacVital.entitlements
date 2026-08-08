@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Not sandboxed. A sandboxed process cannot be granted Full Disk Access,
+	     and without it this app cannot see ~/Library at all. That rules out
+	     the Mac App Store; distribution is Developer ID + notarization. -->
+	<key>com.apple.security.app-sandbox</key>
+	<false/>
+
+	<!-- Hardened runtime is on (see xcconfig). No exceptions are requested:
+	     no JIT, no unsigned memory, no library-validation override, no
+	     debugger entitlement. -->
+</dict>
+</plist>

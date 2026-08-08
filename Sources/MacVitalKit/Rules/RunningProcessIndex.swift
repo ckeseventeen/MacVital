@@ -1,0 +1,109 @@
+import Foundation
+#if canImport(Darwin)
+import Darwin
+#endif
+#if canImport(AppKit)
+import AppKit
+#endif
+
+/// Snapshot of what is currently running, used to refuse deletions that would
+/// pull the rug out from under a live process.
+///
+/// Deliberately cheap: `proc_listallpids` + `proc_pidpath` for executables, and
+/// NSWorkspace for bundle identifiers. A full `lsof` sweep over every candidate
+/// path would take minutes on a real Mac; this catches the cases that actually
+/// cause data loss (deleting a running app's container, wiping a build
+/// directory a compiler is writing into).
+public struct RunningProcessIndex: Sendable {
+    public struct Entry: Hashable, Sendable {
+        public let pid: pid_t
+        public let executablePath: String
+        public let bundleIdentifier: String?
+        public let localizedName: String?
+    }
+
+    public let entries: [Entry]
+    private let runningBundleIDs: Set<String>
+
+    public init(entries: [Entry]) {
+        // Executable paths are compared against realpath-resolved candidates,
+        // so they have to go through the same normalisation. NSWorkspace and
+        // proc_pidpath do not agree on /var vs /private/var.
+        self.entries = entries.map { entry in
+            Entry(
+                pid: entry.pid,
+                executablePath: ProtectedPaths.normalize(entry.executablePath),
+                bundleIdentifier: entry.bundleIdentifier,
+                localizedName: entry.localizedName
+            )
+        }
+        self.runningBundleIDs = Set(entries.compactMap { $0.bundleIdentifier?.lowercased() })
+    }
+
+    public static func snapshot() -> RunningProcessIndex {
+        var byPID: [pid_t: Entry] = [:]
+
+        #if canImport(AppKit)
+        for app in NSWorkspace.shared.runningApplications {
+            let path = app.executableURL?.path ?? app.bundleURL?.path ?? ""
+            byPID[app.processIdentifier] = Entry(
+                pid: app.processIdentifier,
+                executablePath: path,
+                bundleIdentifier: app.bundleIdentifier,
+                localizedName: app.localizedName
+            )
+        }
+        #endif
+
+        for pid in allPIDs() where byPID[pid] == nil {
+            guard let path = executablePath(for: pid) else { continue }
+            byPID[pid] = Entry(pid: pid, executablePath: path, bundleIdentifier: nil, localizedName: nil)
+        }
+
+        return RunningProcessIndex(entries: Array(byPID.values))
+    }
+
+    // MARK: - Queries
+
+    /// A process whose executable lives under `path` — deleting it would kill
+    /// a running program.
+    public func executingProcess(under path: String) -> Entry? {
+        let prefix = path.hasSuffix("/") ? path : path + "/"
+        return entries.first { $0.executablePath == path || $0.executablePath.hasPrefix(prefix) }
+    }
+
+    public func isRunning(bundleIdentifier: String) -> Bool {
+        runningBundleIDs.contains(bundleIdentifier.lowercased())
+    }
+
+    /// Best-effort name for the process that would be affected.
+    public func describe(_ entry: Entry) -> String {
+        entry.localizedName
+            ?? entry.bundleIdentifier
+            ?? (entry.executablePath as NSString).lastPathComponent
+    }
+
+    // MARK: - libproc
+
+    private static func allPIDs() -> [pid_t] {
+        let byteCount = proc_listallpids(nil, 0)
+        guard byteCount > 0 else { return [] }
+        let capacity = Int(byteCount) / MemoryLayout<pid_t>.size + 64
+        var pids = [pid_t](repeating: 0, count: capacity)
+        let written = pids.withUnsafeMutableBufferPointer { buffer -> Int32 in
+            proc_listallpids(buffer.baseAddress, Int32(buffer.count * MemoryLayout<pid_t>.size))
+        }
+        guard written > 0 else { return [] }
+        let count = Int(written) / MemoryLayout<pid_t>.size
+        return Array(pids.prefix(count)).filter { $0 > 0 }
+    }
+
+    private static func executablePath(for pid: pid_t) -> String? {
+        // PROC_PIDPATHINFO_MAXSIZE == 4 * MAXPATHLEN.
+        let capacity = 4 * 1024
+        var buffer = [CChar](repeating: 0, count: capacity)
+        let length = proc_pidpath(pid, &buffer, UInt32(capacity))
+        guard length > 0 else { return nil }
+        return String(cString: buffer)
+    }
+}

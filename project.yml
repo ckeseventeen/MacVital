@@ -1,0 +1,125 @@
+name: MacVital
+
+options:
+  bundleIdPrefix: com.macvital
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+  developmentLanguage: en
+  groupSortPosition: top
+
+configs:
+  Debug: debug
+  Release: release
+
+configFiles:
+  Debug: Config/Debug.xcconfig
+  Release: Config/Release.xcconfig
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    SWIFT_STRICT_CONCURRENCY: minimal
+    MARKETING_VERSION: "1.0.0"
+    CURRENT_PROJECT_VERSION: "1"
+    DEVELOPMENT_TEAM: $(MACVITAL_TEAM_ID)
+    CODE_SIGN_IDENTITY: "Developer ID Application"
+    ENABLE_HARDENED_RUNTIME: YES
+    # This tool cannot work under the App Sandbox: Full Disk Access is
+    # unavailable to sandboxed processes. Distribution is Developer ID +
+    # notarization, not the Mac App Store.
+    ENABLE_APP_SANDBOX: NO
+    CLANG_ENABLE_MODULES: YES
+    GCC_WARN_UNDECLARED_SELECTOR: YES
+    SWIFT_TREAT_WARNINGS_AS_ERRORS: NO
+
+targets:
+  MacVitalKit:
+    type: library.static
+    platform: macOS
+    sources:
+      - path: Sources/MacVitalKit
+    settings:
+      base:
+        PRODUCT_NAME: MacVitalKit
+        SKIP_INSTALL: YES
+        APPLICATION_EXTENSION_API_ONLY: NO
+
+  MacVitalHelper:
+    type: tool
+    platform: macOS
+    sources:
+      - path: Sources/MacVitalHelper
+        excludes:
+          - Info.plist
+          - MacVitalHelper.entitlements
+    dependencies:
+      - target: MacVitalKit
+    settings:
+      base:
+        PRODUCT_NAME: com.macvital.helper
+        PRODUCT_BUNDLE_IDENTIFIER: com.macvital.helper
+        SKIP_INSTALL: YES
+        CODE_SIGN_ENTITLEMENTS: Sources/MacVitalHelper/MacVitalHelper.entitlements
+        OTHER_LDFLAGS:
+          - -sectcreate
+          - __TEXT
+          - __info_plist
+          - $(SRCROOT)/Sources/MacVitalHelper/Info.plist
+
+  MacVital:
+    type: application
+    platform: macOS
+    sources:
+      - path: Sources/MacVital
+        excludes:
+          - Resources/Info.plist
+          - Resources/MacVital.entitlements
+      - path: Resources/LaunchDaemons/com.macvital.helper.plist
+        buildPhase:
+          copyFiles:
+            destination: wrapper
+            subpath: Contents/Library/LaunchDaemons
+    dependencies:
+      - target: MacVitalKit
+      # The privileged helper ships inside Contents/MacOS and is registered
+      # at runtime with SMAppService.
+      - target: MacVitalHelper
+        embed: true
+        codeSign: true
+        copy:
+          destination: executables
+    settings:
+      base:
+        PRODUCT_NAME: MacVital
+        PRODUCT_BUNDLE_IDENTIFIER: com.macvital.MacVital
+        INFOPLIST_FILE: Sources/MacVital/Resources/Info.plist
+        CODE_SIGN_ENTITLEMENTS: Sources/MacVital/Resources/MacVital.entitlements
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ENABLE_PREVIEWS: YES
+        COMBINE_HIDPI_IMAGES: YES
+
+  MacVitalKitTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: Tests/MacVitalKitTests
+    dependencies:
+      - target: MacVitalKit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.macvital.MacVitalKitTests
+
+schemes:
+  MacVital:
+    build:
+      targets:
+        MacVital: all
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - MacVitalKitTests
+    archive:
+      config: Release

@@ -1,0 +1,17 @@
+// Shared build configuration for MacVital.
+//
+// Set MACVITAL_TEAM_ID to your Apple Developer Team ID (10 characters).
+// It is used for code signing AND is baked into the XPC code-signing
+// requirements that the app and the privileged helper use to authenticate
+// each other. Getting it wrong means the helper will refuse every connection.
+MACVITAL_TEAM_ID = ABCDE12345
+
+// Developer ID is a manual-signing identity. Without this, Xcode reads the
+// pinned CODE_SIGN_IDENTITY as conflicting with automatic signing and refuses
+// to build at all ("conflicting provisioning settings").
+CODE_SIGN_STYLE = Manual
+
+// Bundle identifiers. Changing these means changing the launchd plist in
+// Resources/LaunchDaemons and the mach service name in HelperProtocol.swift.
+MACVITAL_APP_BUNDLE_ID = com.macvital.MacVital
+MACVITAL_HELPER_BUNDLE_ID = com.macvital.helper
