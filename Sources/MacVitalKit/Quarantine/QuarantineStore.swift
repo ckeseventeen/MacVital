@@ -368,12 +368,40 @@ public actor QuarantineStore {
         do {
             try FileManager.default.removeItem(at: container)
         } catch {
-            if let privilegedDelete {
+            let local = error
+            guard let privilegedDelete else {
+                throw QuarantineError.moveFailed(Self.explain(localFailure: local, at: container.path))
+            }
+            do {
                 try await privilegedDelete([container.path])
-            } else {
-                throw QuarantineError.moveFailed(error.localizedDescription)
+            } catch {
+                // Report why the *plain* delete failed, not why the fallback
+                // did. The helper is a fallback for root-owned files; when the
+                // block is actually TCC — two containers here were owned by the
+                // user, mode 700, no restricted flags — surfacing the helper's
+                // code-signing complaint sends the user after the wrong thing
+                // entirely.
+                throw QuarantineError.moveFailed(
+                    Self.explain(localFailure: local, at: container.path)
+                    + "（特权助手也不可用：\(error.localizedDescription)）"
+                )
             }
         }
+    }
+
+    /// Turns a `removeItem` failure into something the user can act on.
+    private static func explain(localFailure error: Error, at path: String) -> String {
+        let code = (error as NSError).code
+        let posix = (error as NSError).userInfo[NSUnderlyingErrorKey] as? NSError
+
+        if code == NSFileWriteNoPermissionError || code == NSFileReadNoPermissionError
+            || posix?.code == Int(EPERM) || posix?.code == Int(EACCES) {
+            return "系统拒绝访问 \(PathRedaction.abbreviate(path))。"
+                 + "常见原因是缺少「完整磁盘访问权限」——某些目录（如 Spelling、FontCollections）"
+                 + "即使被移动过，系统仍按受保护内容对待。可在系统设置里补上权限并重启 App，"
+                 + "或在访达中手动删除。"
+        }
+        return error.localizedDescription
     }
 
     // MARK: - Helpers

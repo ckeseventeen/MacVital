@@ -16,7 +16,7 @@ public enum HelperStatus: Equatable, Sendable {
         case .requiresApproval: return "等待在「系统设置 → 通用 → 登录项」中允许"
         case .enabled: return "已就绪"
         case .notFound: return "未找到助手程序（安装包可能不完整）"
-        case .unsupported: return "当前系统不支持"
+        case .unsupported: return "此构建不可用（需要 Developer ID 签名）"
         }
     }
 }
@@ -38,7 +38,24 @@ public actor HelperClient {
         SMAppService.daemon(plistName: HelperConstants.daemonPlistName)
     }
 
+    /// Whether the privileged helper can work *at all* on this build.
+    ///
+    /// The XPC connection is pinned to a code-signing requirement derived from
+    /// the running app's own team identifier. A self-signed build has none, so
+    /// `proxy()` refuses to connect — every privileged operation fails, on
+    /// every attempt, forever. That is by design, but it is a property of the
+    /// build rather than of anything the user did, and until now the only way
+    /// to discover it was to click something and read a message about code
+    /// signing.
+    nonisolated public static var isSupportedByThisBuild: Bool {
+        CodeRequirement.forHelper() != nil
+    }
+
     nonisolated public func status() -> HelperStatus {
+        // A build that can never verify the helper reports `unsupported`
+        // outright rather than `notRegistered`, which invites the user to
+        // install something that will not work.
+        guard Self.isSupportedByThisBuild else { return .unsupported }
         switch service.status {
         case .notRegistered: return .notRegistered
         case .enabled: return .enabled
@@ -167,7 +184,13 @@ public enum HelperError: LocalizedError {
     public var errorDescription: String? {
         switch self {
         case .notConnected: return "无法连接到特权助手。"
-        case .unverifiedHelper: return "无法校验助手程序签名，已拒绝连接。"
+        // Says what it is and what to do. The old text — "无法校验助手程序签名，
+        // 已拒绝连接。" — described the mechanism and left the user clicking the
+        // same button every two seconds, which is exactly what the logs showed.
+        case .unverifiedHelper:
+            return "这个构建无法使用特权助手：它是自签名的，拿不到 team identifier，"
+                 + "而助手只接受能验明身份的调用方。需要用 Developer ID 证书签名的构建才能启用。"
+                 + "涉及系统目录的项目请在访达中手动处理。"
         case .notApproved: return "特权助手尚未获得授权，请在系统设置中允许。"
         case .remote(let message): return message
         }

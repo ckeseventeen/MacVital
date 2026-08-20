@@ -95,6 +95,8 @@ struct QuarantineView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 8)
+            Button("在访达中显示") { model.revealOrphans() }
+                .controlSize(.small)
             Button(model.isReaping ? "清理中…" : "清理") {
                 Task { await model.discardOrphans() }
             }
@@ -148,13 +150,27 @@ struct QuarantineView: View {
                         .foregroundStyle(record.daysRemaining <= 1 ? .orange : .secondary)
                 }
 
-                VStack(spacing: 4) {
-                    Button("还原") { Task { await model.restore(record) } }
-                        .controlSize(.small)
-                        .disabled(model.busyID == record.id)
-                    Button("立即删除") { Task { await model.purge(record) } }
-                        .controlSize(.small)
-                        .disabled(model.busyID == record.id)
+                // A row that needs root on a build that can never reach root
+                // gets an explanation and a way out, not two buttons that fail
+                // identically every time they are pressed.
+                if model.needsHelper(record) {
+                    VStack(alignment: .trailing, spacing: 4) {
+                        Label("需要管理员权限", systemImage: "key.slash")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                        Button("在访达中显示") { model.revealInFinder(record) }
+                            .controlSize(.small)
+                    }
+                    .help("当前构建是自签名的，无法使用特权助手（见「设置 → 安全」）。请在访达中手动处理。")
+                } else {
+                    VStack(spacing: 4) {
+                        Button("还原") { Task { await model.restore(record) } }
+                            .controlSize(.small)
+                            .disabled(model.busyID == record.id)
+                        Button("立即删除") { Task { await model.purge(record) } }
+                            .controlSize(.small)
+                            .disabled(model.busyID == record.id)
+                    }
                 }
             }
             .padding(.vertical, 4)

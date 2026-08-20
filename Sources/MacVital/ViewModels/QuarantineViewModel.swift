@@ -43,8 +43,26 @@ final class QuarantineViewModel: ObservableObject {
         await reload()
         environment.refreshDiskSpace()
         if outcome.removed < paths.count {
-            errorMessage = "清理了 \(outcome.removed)/\(paths.count) 个无主容器，其余无法删除（可能属于 root）。"
+            let stuck = paths.count - outcome.removed
+            errorMessage = "清理了 \(outcome.removed)/\(paths.count) 个，还有 \(stuck) 个删不掉。"
+                + "这类目录（Spelling、FontCollections 等）即使被移动过，系统仍按受保护内容对待，"
+                + "需要「完整磁盘访问权限」。可以在系统设置里补上并重启 App，或用下面的按钮在访达中手动删除。"
         }
+    }
+
+    /// True when the privileged helper can never work on this build, so rows
+    /// that need it should say so instead of failing on click.
+    var helperUnavailableOnThisBuild: Bool { !HelperClient.isSupportedByThisBuild }
+
+    /// Records that can only be handled with root. Clicking these on an
+    /// unsupported build produced the same code-signing error every time.
+    func needsHelper(_ record: QuarantineRecord) -> Bool {
+        record.usedPrivilegedHelper && helperUnavailableOnThisBuild
+    }
+
+    func revealOrphans() {
+        guard let first = orphans.first else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: first.path)])
     }
 
     func restore(_ record: QuarantineRecord) async {
