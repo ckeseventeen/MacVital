@@ -159,11 +159,20 @@ final class ScanViewModel: ObservableObject {
         }
     }
 
+    /// Delegates to `CleanPlanBuilder` so this and `defaultSelection` cannot
+    /// drift apart on what `requiresExplicitSelection` means — they already had
+    /// once, and a global 全选 was quietly ticking every large file and
+    /// duplicate the design says must be approved one at a time.
     func selectAll(in category: ScanCategory?) {
-        for finding in findings where finding.isSelectable {
-            guard category == nil || finding.item.category == category else { continue }
-            selection.insert(finding.id)
-        }
+        selection.formUnion(CleanPlanBuilder.selectAll(in: category, findings: findings))
+    }
+
+    /// Categories the current scope's "select all" deliberately leaves alone,
+    /// so the UI can say so rather than looking broken.
+    var categoriesNeedingExplicitSelection: [ScanCategory] {
+        guard focusedCategory == nil else { return [] }
+        return Array(Set(findings.filter { $0.isSelectable && $0.item.category.requiresExplicitSelection }
+            .map(\.item.category))).sorted { $0.title < $1.title }
     }
 
     func deselectAll(in category: ScanCategory?) {

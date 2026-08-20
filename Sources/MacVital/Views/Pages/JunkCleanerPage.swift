@@ -240,6 +240,15 @@ struct JunkCleanerPage: View {
         ScanCategory.allCases.filter { model.count(in: $0) > 0 }
     }
 
+    /// Says out loud what a global 全选 will not touch. Without this the button
+    /// just appears not to work on those rows.
+    private var selectAllHelp: String {
+        let skipped = model.categoriesNeedingExplicitSelection
+        guard !skipped.isEmpty else { return "勾选当前范围内所有可清理的项目" }
+        return "勾选所有可清理的项目，但不含 \(skipped.map(\.title).joined(separator: "、"))"
+            + " —— 这几类需要你逐项确认。先在上方选中该分类，再用「全选本类」。"
+    }
+
     // MARK: - Footer
 
     private var footer: some View {
@@ -269,6 +278,7 @@ struct JunkCleanerPage: View {
             }
             .buttonStyle(.link)
             .font(.system(size: 13))
+            .help(selectAllHelp)
             // The other two list pages have had this since the start; only the
             // main cleaner was missing it.
             Button(model.focusedCategory == nil ? "全不选" : "全不选本类") {

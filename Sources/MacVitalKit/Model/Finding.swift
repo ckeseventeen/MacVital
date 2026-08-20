@@ -82,4 +82,33 @@ public enum CleanPlanBuilder {
         }
         return selected
     }
+
+    /// What a "select all" button may tick.
+    ///
+    /// Lives here, next to `defaultSelection`, because the two have to agree
+    /// about `requiresExplicitSelection` and for a long time they did not: the
+    /// default selection dutifully skipped those categories while the footer's
+    /// 全选 swept them in, so one click undid a guarantee the enum states in as
+    /// many words — "every item must be individually approved by the user, no
+    /// matter what the rule engine and the model say". A user's photo copies
+    /// and 4 GB videos went into the selection wholesale.
+    ///
+    /// Scoping to a single category *is* the individual approval: choosing
+    /// 大文件 and then 全选本类 is a deliberate act about a list you are
+    /// looking at. A global select-all is not.
+    public static func selectAll(
+        in category: ScanCategory?,
+        findings: [Finding]
+    ) -> Set<UUID> {
+        var selected = Set<UUID>()
+        for finding in findings where finding.isSelectable {
+            if let category {
+                guard finding.item.category == category else { continue }
+            } else {
+                guard !finding.item.category.requiresExplicitSelection else { continue }
+            }
+            selected.insert(finding.id)
+        }
+        return selected
+    }
 }

@@ -208,3 +208,55 @@ final class InstalledAppIndexTests: XCTestCase {
         }
     }
 }
+
+// MARK: - Select all
+
+/// `selectAll` and `defaultSelection` have to agree about
+/// `requiresExplicitSelection`. They did not: the default selection skipped
+/// those categories while the footer's 全选 swept them in, so one click
+/// undid the guarantee the enum states outright.
+extension CleanPlanTests {
+
+    private func findings() -> [Finding] {
+        [
+            finding(category: .developerResidue),
+            finding(category: .caches),
+            finding(category: .largeFiles),
+            finding(category: .duplicateFiles),
+            finding(category: .emptyFolders),
+        ]
+    }
+
+    func testGlobalSelectAllSkipsCategoriesNeedingApproval() {
+        let all = findings()
+        let selected = CleanPlanBuilder.selectAll(in: nil, findings: all)
+        let categories = Set(all.filter { selected.contains($0.id) }.map(\.item.category))
+
+        XCTAssertEqual(categories, [.developerResidue, .caches])
+        for category in ScanCategory.allCases where category.requiresExplicitSelection {
+            XCTAssertFalse(categories.contains(category), "\(category) must not be swept in globally")
+        }
+    }
+
+    /// Scoping to one category *is* the individual approval: the user picked
+    /// that list and is looking at it.
+    func testScopedSelectAllMayIncludeThem() {
+        let all = findings()
+        let selected = CleanPlanBuilder.selectAll(in: .largeFiles, findings: all)
+        let categories = Set(all.filter { selected.contains($0.id) }.map(\.item.category))
+
+        XCTAssertEqual(categories, [.largeFiles])
+    }
+
+    func testSelectAllNeverPicksDeniedItems() {
+        let denied = finding(admission: .deny, category: .caches)
+        let selected = CleanPlanBuilder.selectAll(in: nil, findings: [denied])
+        XCTAssertTrue(selected.isEmpty)
+    }
+
+    func testScopedSelectAllStillSkipsDeniedItems() {
+        let denied = finding(admission: .deny, category: .largeFiles)
+        let selected = CleanPlanBuilder.selectAll(in: .largeFiles, findings: [denied])
+        XCTAssertTrue(selected.isEmpty)
+    }
+}
