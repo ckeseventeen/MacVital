@@ -59,10 +59,25 @@ struct UninstallPage: View {
             isPresented: $confirming,
             titleVisibility: .visible
         ) {
-            Button("移入隔离区", role: .destructive) { Task { await model.uninstall() } }
+            // When the target app is up, quitting is a precondition rather than
+            // a separate errand — so it becomes the primary action instead of a
+            // hint in the footer the user has to notice first.
+            if model.runningInstance != nil {
+                Button("退出并卸载", role: .destructive) { Task { await model.quitAndUninstall() } }
+                Button("仅卸载未占用的项目") { Task { await model.uninstall() } }
+            } else {
+                Button("移入隔离区", role: .destructive) { Task { await model.uninstall() } }
+            }
             Button("取消", role: .cancel) {}
         } message: {
-            Text("将移动 \(model.selection.count) 项，共 \(ByteFormat.string(model.selectedBytes))。文件先进入隔离区，随时可以还原。")
+            if let running = model.runningInstance {
+                Text("「\(running.localizedName ?? model.selectedApp?.name ?? "该 App")」正在运行。"
+                     + "边运行边删会留下残留 —— 它退出时会把偏好设置和容器重新写回去。\n\n"
+                     + "将先请它退出（有未保存内容时它会向你确认），退出后再移动 \(model.selection.count) 项，"
+                     + "共 \(ByteFormat.string(model.selectedBytes))。文件先进入隔离区，随时可以还原。")
+            } else {
+                Text("将移动 \(model.selection.count) 项，共 \(ByteFormat.string(model.selectedBytes))。文件先进入隔离区，随时可以还原。")
+            }
         }
     }
 

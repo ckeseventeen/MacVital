@@ -120,8 +120,9 @@ final class UninstallViewModel: ObservableObject {
     /// `terminate()` rather than `forceTerminate()`: the app gets to run its
     /// normal quit path and prompt about unsaved work. Killing an app outright
     /// to speed up its own uninstall would be a poor trade.
-    func quitRunningInstanceAndReplan() async {
-        guard let running = runningInstance else { return }
+    @discardableResult
+    func quitRunningInstanceAndReplan() async -> Bool {
+        guard let running = runningInstance else { return true }
         running.terminate()
 
         // Poll rather than sleep a fixed amount: quitting is usually instant
@@ -132,6 +133,28 @@ final class UninstallViewModel: ObservableObject {
             if running.isTerminated { break }
         }
         await replan()
+        return running.isTerminated
+    }
+
+    /// Quit the app and, if it actually went away, uninstall it.
+    ///
+    /// Splitting these into two clicks meant noticing the footer hint first,
+    /// which is a thing to notice rather than a thing to do. The semantics are
+    /// unchanged — the user still explicitly agrees to the quit, and it is
+    /// still `terminate()`, so an app with unsaved work still gets to ask.
+    ///
+    /// If it does not quit — a modal sheet, an ignored terminate — the
+    /// uninstall does not run. Proceeding anyway would delete files the app is
+    /// about to rewrite on its own quit, which is the failure this whole check
+    /// exists to prevent.
+    func quitAndUninstall() async {
+        let quit = await quitRunningInstanceAndReplan()
+        guard quit else {
+            summary = "「\(selectedApp?.name ?? "该 App")」没有退出，卸载已中止。请手动退出后重试。"
+            leftovers = rows
+            return
+        }
+        await uninstall()
     }
 
     private func plan(for app: InstalledAppIndex.App, preservingSelection: Bool) async {
