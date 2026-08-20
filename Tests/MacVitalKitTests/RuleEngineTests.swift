@@ -359,3 +359,57 @@ extension RuleEngineTests {
         XCTAssertEqual(Set(ids).count, ids.count, "duplicate rule ids: \(Dictionary(grouping: ids) { $0 }.filter { $0.value.count > 1 }.keys)")
     }
 }
+
+/// A build that cannot reach root must not offer to remove root-owned paths.
+///
+/// A sweep used to tick a dozen /Library/LaunchDaemons entries, the user
+/// pressed 移入隔离区, and every one came back in the skipped list with a
+/// code-signing complaint about the privileged helper. The reported "可回收"
+/// total counted them too.
+extension RuleEngineTests {
+
+    /// A real root-owned plist from this machine. Pinning a fixed name meant
+    /// the file never existed and both tests silently skipped — which is the
+    /// same as not having them.
+    private func systemDaemonItem() throws -> ScanItem {
+        let entries = (try? FileManager.default.contentsOfDirectory(atPath: "/Library/LaunchDaemons")) ?? []
+        let plist = try XCTUnwrap(entries.first { $0.hasSuffix(".plist") },
+                                  "no root-owned plist available to test against")
+        return ScanItem(
+            path: "/Library/LaunchDaemons/\(plist)",
+            category: .appResidue,
+            ruleID: "residue.systemLaunchDaemons",
+            kindHint: "系统守护进程",
+            sizeBytes: 2048,
+            isDirectory: false
+        )
+    }
+
+    private func engine(privileged possible: Bool) -> RuleEngine {
+        RuleEngine(
+            rules: RuleIndex(),
+            processIndex: RunningProcessIndex(entries: []),
+            privilegedRemovalPossible: possible
+        )
+    }
+
+    func testPrivilegedPathIsDeniedWhenTheHelperCannotWork() throws {
+        let item = try systemDaemonItem()
+        let decision = engine(privileged: false).evaluate(item)
+        XCTAssertTrue(decision.isDenied)
+        XCTAssertEqual(decision.denyReason, .privilegedHelperUnavailable)
+    }
+
+    func testPrivilegedPathIsOfferedWhenTheHelperCanWork() throws {
+        let item = try systemDaemonItem()
+        let decision = engine(privileged: true).evaluate(item)
+        XCTAssertEqual(decision.admission, .allowWithPrivilege)
+    }
+
+    /// The distinction matters: the path is removable in principle, just not by
+    /// this copy of the app. Reporting it as SIP-protected would be false.
+    func testUnavailableHelperIsNotReportedAsProtection() {
+        XCTAssertNotEqual(DenyReason.privilegedHelperUnavailable, .systemIntegrityProtected)
+        XCTAssertNotEqual(DenyReason.privilegedHelperUnavailable, .immutableFlag)
+    }
+}

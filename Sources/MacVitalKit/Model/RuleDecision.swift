@@ -24,6 +24,13 @@ public enum DenyReason: String, Codable, Sendable {
     case inUse
     case selfProtection
     case missing
+    /// Needs root, on a build where the privileged helper can never connect.
+    ///
+    /// Distinct from `.systemIntegrityProtected`: the path is removable in
+    /// principle, just not by this copy of the app. Kept separate so the UI can
+    /// say "this build cannot" rather than "this file is protected", which
+    /// would be false.
+    case privilegedHelperUnavailable
 }
 
 public struct RuleDecision: Hashable, Codable, Sendable {

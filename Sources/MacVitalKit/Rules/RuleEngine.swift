@@ -17,16 +17,25 @@ public struct RuleEngine: Sendable {
     public let processIndex: RunningProcessIndex
     /// Our own quarantine directory and app bundle — never removable by us.
     public let selfProtectedPrefixes: [String]
+    /// Whether the privileged helper can be reached at all.
+    ///
+    /// Defaults to asking the build. A self-signed build cannot derive the team
+    /// identifier the XPC connection is pinned to, so every privileged removal
+    /// fails — and the honest verdict for those paths is `deny`, not
+    /// `allowWithPrivilege`. Injectable so tests can exercise both worlds.
+    public let privilegedRemovalPossible: Bool
 
     public init(
         rules: RuleIndex,
         protectedPaths: ProtectedPaths = ProtectedPaths(),
         processIndex: RunningProcessIndex,
-        selfProtectedPrefixes: [String] = []
+        selfProtectedPrefixes: [String] = [],
+        privilegedRemovalPossible: Bool = HelperClient.isSupportedByThisBuild
     ) {
         self.rules = rules
         self.protectedPaths = protectedPaths
         self.processIndex = processIndex
+        self.privilegedRemovalPossible = privilegedRemovalPossible
         // Normalised on the way in: the prefixes are compared against
         // realpath-resolved candidates, so an unnormalised /var/... prefix
         // would silently never match its own /private/var/... contents.
@@ -134,8 +143,19 @@ public struct RuleEngine: Sendable {
         }
 
         // 10. Everything below this line is an allow. The only remaining
-        //    question is whether it needs root.
+        //    question is whether it needs root — and whether root is reachable.
         if rule.requiresPrivilege || !SIPGuard.currentUserCanRemove(resolved) {
+            // A build that cannot verify the helper can never remove these, so
+            // offering them is offering a button that fails every time. It used
+            // to: a sweep would tick a dozen /Library/LaunchDaemons entries,
+            // the user pressed 移入隔离区, and every one came back in the
+            // skipped list with a code-signing complaint. The reported
+            // "可回收" total counted them too.
+            guard privilegedRemovalPossible else {
+                return .deny(rule.id, .privilegedHelperUnavailable,
+                             "位于系统目录，需要特权助手。当前构建是自签名的，无法使用助手"
+                             + "（需要 Developer ID 证书签名的构建）。请在访达中手动处理。")
+            }
             return .privileged(rule.id, rule.rationale + "（需要管理员授权）")
         }
         return .allow(rule.id, rule.rationale)
