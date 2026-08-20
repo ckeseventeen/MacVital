@@ -26,6 +26,9 @@ public actor QuarantineStore {
     private let retentionDays: @Sendable () -> Int
     private var records: [QuarantineRecord] = []
     private var loaded = false
+    /// Non-nil when the manifest exists but could not be decoded. Latches for
+    /// the lifetime of the store and blocks every write.
+    private var manifestUnreadable: String?
 
     public init(root: URL? = nil, retentionDaysProvider: @escaping @Sendable () -> Int) {
         let base = root ?? FileManager.default
@@ -56,21 +59,69 @@ public actor QuarantineStore {
         loadIfNeeded()
     }
 
+    /// Loads the manifest, and refuses to proceed if one exists but cannot be
+    /// read.
+    ///
+    /// This used to be `(try? decode(...)) ?? []`. A manifest that failed to
+    /// decode — a truncated write, a schema change, a kill mid-save — silently
+    /// became an empty record list, and the *next* `persist()` wrote that empty
+    /// list back over the real one. Every file quarantined up to that point was
+    /// orphaned: still on disk, invisible in the UI, never restorable, never
+    /// swept. On the machine this was found on, 102 non-empty containers had
+    /// accumulated that way.
+    ///
+    /// So a decode failure now latches `manifestUnreadable`, which blocks every
+    /// write, and the damaged file is copied aside instead of being overwritten.
     private func loadIfNeeded() {
         guard !loaded else { return }
         loaded = true
-        guard let data = try? Data(contentsOf: manifestURL) else { return }
+
+        // No manifest at all is the normal first run, not a failure.
+        guard FileManager.default.fileExists(atPath: manifestURL.path) else { return }
+
+        guard let data = try? Data(contentsOf: manifestURL) else {
+            manifestUnreadable = "清单文件存在但无法读取"
+            Log.quarantine.error("manifest present but unreadable; refusing to write")
+            return
+        }
+        // A zero-byte manifest is what an interrupted atomic write leaves. It
+        // carries no records, but it is also not evidence that there are none.
+        guard !data.isEmpty else {
+            manifestUnreadable = "清单文件为空"
+            Log.quarantine.error("manifest is empty; refusing to write")
+            return
+        }
+
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        records = (try? decoder.decode([QuarantineRecord].self, from: data)) ?? []
+        do {
+            records = try decoder.decode([QuarantineRecord].self, from: data)
+        } catch {
+            manifestUnreadable = error.localizedDescription
+            let backup = manifestURL.deletingLastPathComponent()
+                .appendingPathComponent("manifest.corrupt-\(Int(Date().timeIntervalSince1970)).json")
+            try? FileManager.default.copyItem(at: manifestURL, to: backup)
+            Log.quarantine.error("manifest failed to decode; copied aside, refusing to write: \(error.localizedDescription, privacy: .public)")
+        }
     }
 
-    private func persist() {
+    private func persist() throws {
+        if let reason = manifestUnreadable {
+            throw QuarantineError.manifestUnreadable(reason)
+        }
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        guard let data = try? encoder.encode(records) else { return }
-        try? data.write(to: manifestURL, options: [.atomic])
+        do {
+            let data = try encoder.encode(records)
+            try data.write(to: manifestURL, options: [.atomic])
+        } catch {
+            // Swallowing this was the other half of the same bug: a record that
+            // never reached disk describes a file that can no longer be found,
+            // restored or purged.
+            Log.quarantine.error("manifest write failed: \(error.localizedDescription, privacy: .public)")
+            throw QuarantineError.manifestWriteFailed(error.localizedDescription)
+        }
     }
 
     public func allRecords() -> [QuarantineRecord] {
@@ -135,7 +186,20 @@ public actor QuarantineStore {
             usedPrivilegedHelper: decision.admission == .allowWithPrivilege
         )
         records.append(record)
-        persist()
+        do {
+            try persist()
+        } catch {
+            // The file has already moved. A record we cannot write describes a
+            // file nothing could ever restore or purge, so put it back rather
+            // than leave it stranded.
+            records.removeLast()
+            if decision.admission != .allowWithPrivilege {
+                try? moveOrCopy(from: destination, to: source)
+            }
+            try? FileManager.default.removeItem(at: container)
+            Log.quarantine.error("rolled back \(Log.path(item.path), privacy: .public) after manifest failure")
+            throw error
+        }
         Log.quarantine.info("quarantined \(Log.path(item.path), privacy: .public) (\(item.sizeBytes) bytes)")
         return record
     }
@@ -175,7 +239,7 @@ public actor QuarantineStore {
 
         try? FileManager.default.removeItem(at: stored.deletingLastPathComponent())
         records.remove(at: index)
-        persist()
+        try persist()
         Log.quarantine.info("restored \(Log.path(record.originalPath), privacy: .public)")
     }
 
@@ -193,7 +257,7 @@ public actor QuarantineStore {
         let record = records[index]
         try await remove(record: record, privilegedDelete: privilegedDelete)
         records.remove(at: index)
-        persist()
+        try persist()
     }
 
     /// The 7-day timer. Called on launch and periodically thereafter.
@@ -215,9 +279,81 @@ public actor QuarantineStore {
                 Log.quarantine.error("sweep failed for \(record.id, privacy: .public): \(error.localizedDescription, privacy: .public)")
             }
         }
-        if purged > 0 { persist() }
+        if purged > 0 {
+            do {
+                try persist()
+            } catch {
+                Log.quarantine.error("sweep could not persist: \(error.localizedDescription, privacy: .public)")
+            }
+        }
         Log.quarantine.info("swept \(purged, privacy: .public) expired records")
         return purged
+    }
+
+    // MARK: - Orphans
+
+    /// A container under `Items/` that no manifest record points at.
+    ///
+    /// These are unreachable by design: the UI lists records, and the sweep
+    /// only visits directories a record names. Anything here is invisible,
+    /// unrestorable and permanent until something collects it.
+    public struct Orphan: Identifiable, Sendable, Hashable {
+        public var id: String { path }
+        public var path: String
+        public var name: String
+        public var sizeBytes: Int64
+        public var isEmpty: Bool
+        public var modified: Date?
+    }
+
+    public func orphanedContainers() -> [Orphan] {
+        loadIfNeeded()
+        // While the manifest is unreadable we do not know what is referenced,
+        // so nothing may be called an orphan.
+        guard manifestUnreadable == nil else { return [] }
+
+        let known = Set(records.map { URL(fileURLWithPath: $0.storedPath).deletingLastPathComponent().path })
+        var found: [Orphan] = []
+
+        for child in FileWalker.children(of: itemsDirectory) {
+            let path = child.path
+            guard !known.contains(path) else { continue }
+            guard (try? child.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true else { continue }
+            // Only ever the UUID-shaped directories this store creates itself.
+            guard UUID(uuidString: child.lastPathComponent) != nil else { continue }
+
+            let contents = (try? FileManager.default.contentsOfDirectory(atPath: path)) ?? []
+            let attributes = FileWalker.attributes(of: child)
+            found.append(Orphan(
+                path: path,
+                name: contents.first ?? child.lastPathComponent,
+                sizeBytes: contents.isEmpty ? 0 : FileWalker.size(of: child),
+                isEmpty: contents.isEmpty,
+                modified: attributes.modified
+            ))
+        }
+        return found.sorted { $0.sizeBytes > $1.sizeBytes }
+    }
+
+    /// Delete orphan containers. Re-derives the orphan set rather than trusting
+    /// the caller's list, so a stale UI cannot name a live record's container.
+    @discardableResult
+    public func discardOrphans(paths: Set<String>) -> (removed: Int, bytes: Int64) {
+        let orphans = orphanedContainers().filter { paths.contains($0.path) }
+        var removed = 0
+        var bytes: Int64 = 0
+        for orphan in orphans {
+            guard orphan.path.hasPrefix(itemsDirectory.path + "/") else { continue }
+            do {
+                try FileManager.default.removeItem(atPath: orphan.path)
+                removed += 1
+                bytes += orphan.sizeBytes
+            } catch {
+                Log.quarantine.error("could not remove orphan: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+        Log.quarantine.info("discarded \(removed, privacy: .public) orphan containers")
+        return (removed, bytes)
     }
 
     private func remove(

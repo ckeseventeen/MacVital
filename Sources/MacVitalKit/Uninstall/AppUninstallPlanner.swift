@@ -107,10 +107,20 @@ public struct AppUninstallPlanner: Sendable {
             ("\(home)/Library/WebKit",                    .state,      "residue.webkit"),
             ("\(home)/Library/Logs",                      .log,        "residue.logs"),
             ("\(home)/Library/LaunchAgents",              .launchItem, "residue.launchAgents"),
+            // Added after comparing coverage against AppCleaner and CleanMyMac
+            // on a real machine. Every one of these is keyed on the bundle
+            // identifier the same way the block above is; leaving them out is
+            // why "卸载干净" was not true.
+            ("\(home)/Library/Cookies",                   .state,      "residue.cookies"),
+            ("\(home)/Library/Autosave Information",      .state,      "residue.autosave"),
+            ("\(home)/Library/Caches/com.apple.helpd",    .cache,      "residue.helpCache"),
             // Root-owned. The engine marks these `allowWithPrivilege` itself.
             ("/Library/LaunchAgents",                     .launchItem, "residue.systemLaunchAgents"),
             ("/Library/LaunchDaemons",                    .launchItem, "residue.systemLaunchDaemons"),
             ("/Library/PrivilegedHelperTools",            .launchItem, "residue.privilegedHelpers"),
+            ("/Library/Application Support",              .support,    "residue.systemApplicationSupport"),
+            ("/Library/Caches",                           .cache,      "residue.systemCaches"),
+            ("/Library/Preferences",                      .preference, "residue.systemPreferences"),
             // Installer receipts. Reachable only because `ProtectedPaths`
             // exempts exactly this directory from the /private/var/db deny.
             ("/private/var/db/receipts",                  .receipt,    "uninstall.installerReceipt"),
@@ -131,7 +141,141 @@ public struct AppUninstallPlanner: Sendable {
             add("\(home)/Library/Logs/\(name)", kind: .log, ruleID: "residue.logs")
         }
 
+        // 4. Crash logs. These are named `<DisplayName>_<HardwareUUID>.plist`,
+        //    so neither the identifier match nor an exact name match finds
+        //    them — it has to be a name prefix ending at the underscore.
+        addCrashReports(app: app, into: &candidates, seen: &seen)
+
+        // 5. Plug-in style bundles. Their directory names are product names,
+        //    not identifiers, so guessing from the filename would be exactly
+        //    the loose matching this planner avoids everywhere else. Read each
+        //    bundle's own CFBundleIdentifier instead and match that.
+        for directory in Self.pluginDirectories(home: home) {
+            addBundlesIdentifying(directory, identifier: id, kind: .state,
+                                 ruleID: "residue.pluginBundles",
+                                 into: &candidates, seen: &seen, app: app)
+        }
+
+        // 6. Sandbox containers macOS named with a UUID rather than the bundle
+        //    identifier. Nothing about the directory name reveals the owner;
+        //    the container's own metadata does.
+        addUUIDContainers(identifier: id, into: &candidates, seen: &seen, app: app)
+
         return candidates.sorted { $0.item.sizeBytes > $1.item.sizeBytes }
+    }
+
+    // MARK: - Crash reports
+
+    private func addCrashReports(
+        app: InstalledAppIndex.App,
+        into candidates: inout [Candidate],
+        seen: inout Set<String>
+    ) {
+        let root = URL(fileURLWithPath: "\(home)/Library/Application Support/CrashReporter")
+        guard fileManager.fileExists(atPath: root.path) else { return }
+        let keys = nameKeys(for: app).map { $0.lowercased() }
+        guard !keys.isEmpty else { return }
+
+        for child in FileWalker.children(of: root) {
+            let name = child.lastPathComponent
+            // `Claude_F73D….plist` -> `Claude`. Anchored at the underscore so
+            // `Codex` never claims `CodexHelper_….plist`.
+            guard let underscore = name.lastIndex(of: "_") else { continue }
+            let stem = String(name[name.startIndex..<underscore]).lowercased()
+            guard keys.contains(stem) else { continue }
+
+            let normalized = ProtectedPaths.normalize(child.path)
+            guard seen.insert(normalized).inserted else { continue }
+            guard let item = makeItem(path: normalized, kind: .log, ruleID: "residue.crashReports", app: app) else { continue }
+            candidates.append(Candidate(item: item, kind: .log))
+        }
+    }
+
+    // MARK: - Plug-in bundles
+
+    static func pluginDirectories(home: String) -> [String] {
+        [
+            "\(home)/Library/Services",
+            "\(home)/Library/QuickLook",
+            "\(home)/Library/Internet Plug-Ins",
+            "\(home)/Library/PreferencePanes",
+            "\(home)/Library/Screen Savers",
+            "\(home)/Library/Widgets",
+            "\(home)/Library/Audio/Plug-Ins/Components",
+            "\(home)/Library/Audio/Plug-Ins/HAL",
+            "\(home)/Library/Audio/Plug-Ins/VST",
+            "\(home)/Library/Audio/Plug-Ins/VST3",
+            "\(home)/Library/Spotlight",
+            "\(home)/Library/Mail/Bundles",
+        ]
+    }
+
+    private func addBundlesIdentifying(
+        _ directory: String,
+        identifier: String,
+        kind: Kind,
+        ruleID: String,
+        into candidates: inout [Candidate],
+        seen: inout Set<String>,
+        app: InstalledAppIndex.App
+    ) {
+        let root = URL(fileURLWithPath: directory)
+        guard fileManager.fileExists(atPath: root.path) else { return }
+
+        for child in FileWalker.children(of: root) {
+            guard let bundleID = Self.bundleIdentifier(at: child) else { continue }
+            guard Self.name(bundleID, belongsTo: identifier) else { continue }
+            let normalized = ProtectedPaths.normalize(child.path)
+            guard seen.insert(normalized).inserted else { continue }
+            guard let item = makeItem(path: normalized, kind: kind, ruleID: ruleID, app: app) else { continue }
+            candidates.append(Candidate(item: item, kind: kind))
+        }
+    }
+
+    static func bundleIdentifier(at url: URL) -> String? {
+        let plist = url.appendingPathComponent("Contents/Info.plist")
+        guard let data = try? Data(contentsOf: plist),
+              let object = try? PropertyListSerialization.propertyList(from: data, format: nil),
+              let dictionary = object as? [String: Any]
+        else { return nil }
+        return dictionary["CFBundleIdentifier"] as? String
+    }
+
+    // MARK: - UUID containers
+
+    /// macOS does not always name a sandbox container after its owner. When it
+    /// does not, the only link back is `MCMMetadataIdentifier` inside the
+    /// container's own metadata plist — which is why a UUID container survived
+    /// an uninstall and then sat in quarantine as an unattributable blob.
+    private func addUUIDContainers(
+        identifier: String,
+        into candidates: inout [Candidate],
+        seen: inout Set<String>,
+        app: InstalledAppIndex.App
+    ) {
+        let root = URL(fileURLWithPath: "\(home)/Library/Containers")
+        guard fileManager.fileExists(atPath: root.path) else { return }
+
+        for child in FileWalker.children(of: root) {
+            // Only the ones the identifier match cannot already reach.
+            guard UUID(uuidString: child.lastPathComponent) != nil else { continue }
+            guard let owner = Self.containerOwner(at: child) else { continue }
+            guard Self.name(owner, belongsTo: identifier) else { continue }
+
+            let normalized = ProtectedPaths.normalize(child.path)
+            guard seen.insert(normalized).inserted else { continue }
+            guard let item = makeItem(path: normalized, kind: .container, ruleID: "residue.containers", app: app) else { continue }
+            candidates.append(Candidate(item: item, kind: .container))
+        }
+    }
+
+    static func containerOwner(at container: URL) -> String? {
+        let plist = container.appendingPathComponent(".com.apple.containermanagerd.metadata.plist")
+        guard let data = try? Data(contentsOf: plist),
+              let object = try? PropertyListSerialization.propertyList(from: data, format: nil),
+              let dictionary = object as? [String: Any]
+        else { return nil }
+        return dictionary["MCMMetadataIdentifier"] as? String
     }
 
     // MARK: - Helpers

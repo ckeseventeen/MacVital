@@ -22,6 +22,10 @@ struct QuarantineView: View {
         VStack(spacing: 0) {
             header
             Divider()
+            if !model.orphans.isEmpty {
+                orphanBanner
+                Divider()
+            }
             if model.records.isEmpty {
                 emptyState
             } else {
@@ -71,6 +75,34 @@ struct QuarantineView: View {
                 .keyboardShortcut(.cancelAction)
         }
         .padding(16)
+    }
+
+    /// Orphans are not records, so they cannot be listed among them — none has
+    /// an original path to go back to. One banner and one button is the whole
+    /// interaction.
+    private var orphanBanner: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "questionmark.folder")
+                .foregroundStyle(.orange)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("发现 \(model.orphans.count) 个无主容器（\(ByteFormat.string(model.orphanBytes))）")
+                    .font(.callout.weight(.medium))
+                Text(model.orphansWithContent > 0
+                     ? "其中 \(model.orphansWithContent) 个装着文件。它们没有对应的记录，既不会出现在上面的列表里，也不会到期自动清除 —— 只能在这里删掉。"
+                     : "都是空目录，早期版本搬运失败时留下的。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 8)
+            Button(model.isReaping ? "清理中…" : "清理") {
+                Task { await model.discardOrphans() }
+            }
+            .disabled(model.isReaping)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(Color.orange.opacity(0.08))
     }
 
     private var emptyState: some View {

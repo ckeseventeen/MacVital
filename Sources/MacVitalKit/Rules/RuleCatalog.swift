@@ -415,6 +415,75 @@ public enum RuleCatalog {
             autoSelectable: false,
             requiresPrivilege: true
         ),
+
+        // Added after benchmarking uninstall coverage against AppCleaner and
+        // CleanMyMac. Each of these is a location those tools clear and this
+        // one did not, which is what made a "clean" uninstall leave things
+        // behind. They stay `autoSelectable: false` — the uninstaller pre-ticks
+        // by `Kind`, so coverage here does not silently widen a sweep.
+        CleanupRule(
+            id: "residue.cookies",
+            category: .appResidue,
+            pattern: "~/Library/Cookies/*",
+            kind: "Cookie",
+            rationale: "App 存放的 Cookie 文件。",
+            autoSelectable: false
+        ),
+        CleanupRule(
+            id: "residue.autosave",
+            category: .appResidue,
+            pattern: "~/Library/Autosave Information/*",
+            kind: "自动保存信息",
+            rationale: "App 的自动保存与恢复信息，重新打开 App 时重建。",
+            autoSelectable: false
+        ),
+        CleanupRule(
+            id: "residue.crashReports",
+            category: .appResidue,
+            pattern: "~/Library/Application Support/CrashReporter/*",
+            kind: "崩溃日志",
+            rationale: "该 App 的崩溃报告，仅供诊断，删除不影响任何功能。",
+            autoSelectable: false
+        ),
+        CleanupRule(
+            id: "residue.helpCache",
+            category: .appResidue,
+            pattern: "~/Library/Caches/com.apple.helpd/*",
+            kind: "帮助文档缓存",
+            rationale: "系统为该 App 的帮助书生成的索引缓存。",
+            autoSelectable: false
+        ),
+        CleanupRule(
+            id: "residue.pluginBundles",
+            category: .appResidue,
+            // One pattern per location would be a dozen near-identical rules;
+            // the planner only ever produces a path it has already matched by
+            // reading the bundle's own CFBundleIdentifier, and the engine still
+            // re-checks this pattern before anything moves.
+            pattern: "~/Library/**",
+            kind: "插件与扩展",
+            rationale: "App 安装的服务、QuickLook、音频插件等扩展包。",
+            rebuildable: false,
+            autoSelectable: false
+        ),
+        CleanupRule(
+            id: "residue.systemCaches",
+            category: .appResidue,
+            pattern: "/Library/Caches/*",
+            kind: "系统级缓存",
+            rationale: "系统级 App 缓存，需要管理员权限。",
+            autoSelectable: false,
+            requiresPrivilege: true
+        ),
+        CleanupRule(
+            id: "residue.systemPreferences",
+            category: .appResidue,
+            pattern: "/Library/Preferences/*",
+            kind: "系统级偏好设置",
+            rationale: "系统级 App 偏好设置，需要管理员权限。",
+            autoSelectable: false,
+            requiresPrivilege: true
+        ),
     ]
 
     // MARK: - Caches

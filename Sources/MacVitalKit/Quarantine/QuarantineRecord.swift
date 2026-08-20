@@ -66,6 +66,10 @@ public enum QuarantineError: LocalizedError {
     case recordNotFound
     case moveFailed(String)
     case privilegeRequired
+    /// The manifest is on disk but could not be decoded. Every write is refused
+    /// while this holds — see `QuarantineStore.loadIfNeeded`.
+    case manifestUnreadable(String)
+    case manifestWriteFailed(String)
 
     public var errorDescription: String? {
         switch self {
@@ -76,6 +80,10 @@ public enum QuarantineError: LocalizedError {
         case .recordNotFound: return "找不到该隔离记录。"
         case .moveFailed(let detail): return "移动失败：\(detail)"
         case .privilegeRequired: return "该操作需要管理员授权。"
+        case .manifestUnreadable(let detail):
+            return "隔离区清单损坏，已停止写入以免丢失既有记录：\(detail)"
+        case .manifestWriteFailed(let detail):
+            return "隔离区清单写入失败：\(detail)"
         }
     }
 }
