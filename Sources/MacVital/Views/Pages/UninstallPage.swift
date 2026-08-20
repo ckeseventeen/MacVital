@@ -202,10 +202,25 @@ struct UninstallPage: View {
     private var footer: some View {
         HStack(spacing: 12) {
             if let summary = model.summary {
-                Label(summary, systemImage: "checkmark.circle")
-                    .font(.system(size: 12))
-                    .foregroundStyle(Theme.secondaryLabel)
-                    .lineLimit(2)
+                // The verification result, not just a receipt. A re-plan ran
+                // after the removal; either it came back with nothing — which
+                // is what makes "卸载干净" a checkable statement rather than a
+                // marketing one — or it names what is still there.
+                VStack(alignment: .leading, spacing: 2) {
+                    Label(summary, systemImage: "checkmark.circle")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Theme.secondaryLabel)
+                        .lineLimit(2)
+                    if model.isVerifiedClean {
+                        Label("已复查：这个 App 的残留没有剩下任何一项", systemImage: "checkmark.seal.fill")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(Theme.success)
+                    } else {
+                        Label("复查后仍有 \(model.leftovers.count) 项残留，列在上方", systemImage: "exclamationmark.triangle.fill")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(Theme.junk)
+                    }
+                }
             // "Still running" is the one lock the user can clear, so it gets an
             // action instead of a count. Everything else here is permanent and
             // there is nothing to offer.

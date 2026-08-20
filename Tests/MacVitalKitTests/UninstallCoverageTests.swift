@@ -167,6 +167,67 @@ final class UninstallCoverageTests: XCTestCase {
         assertNotPlanned(container, "no metadata means no attribution, so no claim")
     }
 
+    // MARK: - The "clean" invariant
+
+    /// Plant residue everywhere the planner knows about, remove exactly what it
+    /// proposes, then plan again and expect nothing.
+    ///
+    /// This is the property the uninstall page's post-run check reports to the
+    /// user, tested here at the level that can actually assert it. A location
+    /// the planner cannot see fails this test rather than quietly leaving
+    /// something behind — which is how the gaps that prompted this work went
+    /// unnoticed in the first place.
+    func testSecondPlanIsEmptyAfterRemovingTheFirst() throws {
+        try plant("Library/Application Support/com.acme.Editor/state.db")
+        try plant("Library/Application Support/com.acme.Editor.Helper/aux.db")
+        try plant("Library/Caches/com.acme.Editor/blob")
+        try plant("Library/Preferences/com.acme.Editor.plist")
+        try plant("Library/Preferences/ByHost/com.acme.Editor.ABC.plist")
+        try plant("Library/Containers/com.acme.Editor/Data.txt")
+        try plant("Library/Group Containers/ABCDE12345.com.acme.Editor/shared.db")
+        try plant("Library/Application Scripts/com.acme.Editor.FinderSync/script")
+        try plant("Library/Saved Application State/com.acme.Editor.savedState/window")
+        try plant("Library/HTTPStorages/com.acme.Editor/cookies")
+        try plant("Library/WebKit/com.acme.Editor/local")
+        try plant("Library/Logs/com.acme.Editor/run.log")
+        try plant("Library/LaunchAgents/com.acme.Editor.plist")
+        try plant("Library/Cookies/com.acme.Editor.binarycookies")
+        try plant("Library/Autosave Information/com.acme.Editor.plist")
+        try plant("Library/Caches/com.apple.helpd/com.acme.Editor/index")
+        try plant("Library/Application Support/CrashReporter/Acme Editor_ABC.plist")
+        try plant("Library/Application Support/Acme Editor/legacy.db")
+        _ = try plantBundle("Library/QuickLook/Acme.qlgenerator", identifier: "com.acme.Editor.QL")
+        _ = try plantContainer(uuid: "4848CFC5-048C-4C21-92D3-85AC0EF163D8", owner: "com.acme.Editor")
+
+        let first = planner.plan(for: app)
+        XCTAssertGreaterThan(first.count, 15, "fixture should exercise most locations")
+
+        for candidate in first {
+            try FileManager.default.removeItem(atPath: candidate.item.path)
+        }
+
+        let second = planner.plan(for: app)
+        XCTAssertTrue(
+            second.isEmpty,
+            "uninstall left residue behind: " + second.map { PathRedaction.abbreviate($0.item.path) }.joined(separator: ", ")
+        )
+    }
+
+    /// The other half of the same claim: removing one app's residue must not
+    /// take a neighbour's with it.
+    func testRemovingOneAppLeavesAnotherIntact() throws {
+        try plant("Library/Application Support/com.acme.Editor/state.db")
+        let neighbour = try plant("Library/Application Support/com.other.Thing/state.db")
+        let sibling = try plant("Library/Preferences/com.acme.EditorPro.plist")
+
+        for candidate in planner.plan(for: app) {
+            try? FileManager.default.removeItem(atPath: candidate.item.path)
+        }
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: neighbour.path), "another vendor's data was removed")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: sibling.path), "a neighbouring identifier was removed")
+    }
+
     // MARK: - Rule coverage
 
     /// Every path the planner proposes has to be describable by a rule in the

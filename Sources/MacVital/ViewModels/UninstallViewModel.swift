@@ -31,6 +31,13 @@ final class UninstallViewModel: ObservableObject {
     @Published private(set) var isPlanning = false
     @Published private(set) var isRemoving = false
     @Published private(set) var summary: String?
+    /// What a re-plan found still on disk after the removal ran.
+    ///
+    /// "卸载干净" is a claim about coverage, and coverage is the one thing the
+    /// app cannot verify by reasoning about its own code. So it re-runs the
+    /// planner afterwards and shows whatever is left — including nothing, which
+    /// is the answer that makes the claim worth anything.
+    @Published private(set) var leftovers: [Row] = []
 
     private let environment: AppEnvironment
 
@@ -93,6 +100,7 @@ final class UninstallViewModel: ObservableObject {
         rows = []
         selection = []
         summary = nil
+        leftovers = []
         await plan(for: app, preservingSelection: false)
     }
 
@@ -193,6 +201,7 @@ final class UninstallViewModel: ObservableObject {
         rows = []
         selection = []
         summary = nil
+        leftovers = []
     }
 
     // MARK: - Selection
@@ -242,7 +251,21 @@ final class UninstallViewModel: ObservableObject {
         // list of paths that no longer exist.
         if let app = selectedApp {
             loadApps()
+            let previousSummary = summary
             await select(app)
+            summary = previousSummary
+            // Whatever the planner still finds is, by definition, what the
+            // uninstall did not get. Rows locked by a deny reason count too —
+            // they are exactly the ones the user would otherwise never learn
+            // about.
+            leftovers = rows
         }
+    }
+
+    var isVerifiedClean: Bool { summary != nil && leftovers.isEmpty }
+
+    func dismissSummary() {
+        summary = nil
+        leftovers = []
     }
 }
