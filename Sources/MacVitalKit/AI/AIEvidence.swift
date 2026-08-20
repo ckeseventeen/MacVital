@@ -100,7 +100,7 @@ public enum EvidenceCollector {
             let parsed = readPlist(at: item.url)
             plistKeys = parsed.keys
             identityValues = parsed.identity
-        } else {
+        } else if mayReadHead(of: item) {
             snippet = readHead(of: item.url)
         }
 
@@ -120,6 +120,37 @@ public enum EvidenceCollector {
             deterministicOwner: item.ownerHint?.label,
             rebuildEvidence: item.rebuildable ? "找到可重建依据" : nil
         )
+    }
+
+    /// Whether a head snippet may be collected for this item at all.
+    ///
+    /// The snippet exists to attribute residue: a config file left in
+    /// `~/Library` usually names its vendor in the first line, and that is the
+    /// case bundle-ID matching fails on. It is worth 384 bytes.
+    ///
+    /// It is not worth anything for the user's own files, and those are exactly
+    /// the ones where it is dangerous. `largeFiles` and `duplicateFiles` walk
+    /// `~/Documents`, `~/Desktop`, `~/Downloads`, `~/Movies` and `~/Pictures` —
+    /// so with the cloud advisor enabled, the opening lines of a user's `.csv`,
+    /// `.md`, `.json`, `.log` or `.env` were being sent to a remote API. The
+    /// binary filter was never protection here: a text file *is* the content,
+    /// and text is where the secrets are.
+    ///
+    /// Nothing is lost by refusing. What the model is asked about a large file
+    /// is "what is this", which the extension, the size and the path already
+    /// answer — the categories are also `requiresExplicitSelection`, so the
+    /// user reads every one of them regardless.
+    static func mayReadHead(of item: ScanItem) -> Bool {
+        switch item.category {
+        case .largeFiles, .duplicateFiles:
+            return false
+        case .developerResidue, .appResidue, .caches, .emptyFolders, .appUninstall:
+            // Even in these categories, only inside ~/Library. A project
+            // artifact rule may reach into ~/Documents, and a stray file there
+            // is the user's, not an app's.
+            return ProtectedPaths.normalize(item.path)
+                .hasPrefix(ProtectedPaths.normalize("\(PathRedaction.home)/Library") + "/")
+        }
     }
 
     private static func readPlist(at url: URL) -> (keys: [String], identity: [String: String]) {
