@@ -16,6 +16,7 @@ extension ScanCategory {
         case .largeFiles:       return Color(red: 0.93, green: 0.33, blue: 0.44)  // rose
         case .duplicateFiles:   return Color(red: 0.13, green: 0.68, blue: 0.66)  // teal
         case .caches:           return Color(red: 0.25, green: 0.56, blue: 0.98)  // blue
+        case .emptyFolders:     return Color(red: 0.52, green: 0.55, blue: 0.60)  // slate
         case .appUninstall:     return Color(red: 0.85, green: 0.28, blue: 0.28)  // red
         }
     }

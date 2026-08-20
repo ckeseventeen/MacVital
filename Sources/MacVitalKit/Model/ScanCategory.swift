@@ -13,6 +13,8 @@ public enum ScanCategory: String, Codable, CaseIterable, Sendable, Identifiable 
     case duplicateFiles
     /// Ordinary per-app caches. Table stakes, zero differentiation.
     case caches
+    /// Directories containing nothing but other empty directories.
+    case emptyFolders
     /// Everything belonging to one app the user has chosen to remove. Produced
     /// by `AppUninstallPlanner`, not by a scanner — the user names the app
     /// first, so this never appears in a sweep.
@@ -36,6 +38,7 @@ public enum ScanCategory: String, Codable, CaseIterable, Sendable, Identifiable 
         case .largeFiles: return "大文件"
         case .duplicateFiles: return "重复文件"
         case .caches: return "缓存"
+        case .emptyFolders: return "空文件夹"
         case .appUninstall: return "卸载应用"
         }
     }
@@ -47,6 +50,7 @@ public enum ScanCategory: String, Codable, CaseIterable, Sendable, Identifiable 
         case .largeFiles: return "doc.viewfinder"
         case .duplicateFiles: return "doc.on.doc"
         case .caches: return "internaldrive"
+        case .emptyFolders: return "folder.badge.minus"
         case .appUninstall: return "trash.square"
         }
     }
@@ -63,6 +67,8 @@ public enum ScanCategory: String, Codable, CaseIterable, Sendable, Identifiable 
             return "内容完全相同的副本，每组会保留一份。"
         case .caches:
             return "App 缓存目录，删除后由 App 自行重建。"
+        case .emptyFolders:
+            return "什么都不剩的空目录，卸载和搬移之后留下的骨架。"
         case .appUninstall:
             return "选定 App 的程序包及其散落在系统各处的配置、容器和登录项。"
         }
@@ -73,6 +79,8 @@ public enum ScanCategory: String, Codable, CaseIterable, Sendable, Identifiable 
     public var requiresExplicitSelection: Bool {
         switch self {
         case .largeFiles, .duplicateFiles: return true
+        // 空目录偶尔是程序运行时依赖的挂载点或占位符，逐个确认。
+        case .emptyFolders: return true
         // Uninstall items are already the product of an explicit choice — the
         // user named the app — so the tick marks are pre-set. The confirm
         // sheet is still the authorisation step.

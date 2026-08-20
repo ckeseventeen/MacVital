@@ -5,7 +5,7 @@ import Foundation
 /// can select it.
 public enum RuleCatalog {
     public static let all: [CleanupRule] =
-        developerResidue + projectArtifacts + appResidue + caches + userFiles + appUninstall
+        developerResidue + projectArtifacts + appResidue + caches + userFiles + emptyFolders + appUninstall
 
     // MARK: - Uninstall
 
@@ -542,6 +542,32 @@ public enum RuleCatalog {
             rebuildable: false,
             autoSelectable: false,
             allowedInUserData: true
+        ),
+    ]
+
+    // MARK: - Empty folders
+
+    /// `~/Library` only, and deliberately not `~/Documents` and friends.
+    ///
+    /// The first draft had a second rule covering the user's file roots, with
+    /// `allowedInUserData: true` and a `~/**` pattern. `testUserDataOptInIsNarrow`
+    /// rejected it, and that test was right: the opt-in list is meant to be
+    /// readable as "unambiguous build output", and a wildcard over the whole
+    /// home directory is the opposite of that.
+    ///
+    /// The narrowing is also the better product answer. An empty folder under
+    /// `~/Library` is what an uninstall leaves behind; an empty folder in
+    /// `~/Documents` is the user's own filing, and proposing to delete it is
+    /// presumptuous in a way no space saving justifies — there is none anyway.
+    public static let emptyFolders: [CleanupRule] = [
+        CleanupRule(
+            id: "empty.userLibrary",
+            category: .emptyFolders,
+            pattern: "~/Library/**",
+            kind: "空目录",
+            rationale: "目录下没有任何文件，只剩空的子目录。多半是卸载或搬移之后留下的骨架。删除同时会移除其中的 .DS_Store。",
+            rebuildable: false,
+            autoSelectable: false
         ),
     ]
 }

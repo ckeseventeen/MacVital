@@ -79,6 +79,7 @@ public struct ScanEngine: Sendable {
             DeveloperResidueScanner(),
             AppResidueScanner(),
             CacheScanner(),
+            EmptyDirectoryScanner(),
             DuplicateFileScanner(),
             LargeFileScanner(),
         ]
