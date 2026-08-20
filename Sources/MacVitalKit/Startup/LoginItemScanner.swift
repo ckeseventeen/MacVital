@@ -122,7 +122,17 @@ public struct LoginItemScanner: Sendable {
             ?? (plist["ProgramArguments"] as? [String])?.first
 
         let attributes = FileWalker.attributes(of: url)
-        let owner = index.match(residueName: label)
+        // The plist names its owner far more reliably than the label does. A
+        // program inside an installed `.app` attributes to that app; the label
+        // only ever matched when the vendor happened to name it after the
+        // bundle identifier.
+        var owner = index.match(residueName: label)
+        if case .none = owner,
+           let program,
+           let bundle = LaunchItemAttribution.enclosingAppBundle(of: program),
+           let app = index.apps.first(where: { $0.path == bundle }) {
+            owner = .installed(app)
+        }
 
         return LoginItem(
             path: ProtectedPaths.normalize(url.path),
@@ -159,18 +169,10 @@ public struct LoginItemScanner: Sendable {
         return nil
     }
 
+    /// Shared with the residue scanner, which needs the same answer — it used
+    /// to have none, and reported live daemons as leftovers because of it.
     private static func enclosingAppBundle(of executable: String) -> String? {
-        var url = URL(fileURLWithPath: executable)
-        // Bounded walk — a runaway loop on a malformed path is not worth the
-        // generality, and no bundle nests deeper than this.
-        for _ in 0..<6 {
-            url = url.deletingLastPathComponent()
-            guard url.path != "/" else { return nil }
-            if url.pathExtension == "app" {
-                return FileManager.default.fileExists(atPath: url.path) ? url.path : nil
-            }
-        }
-        return nil
+        LaunchItemAttribution.enclosingAppBundle(of: executable)
     }
 
     /// `KeepAlive` is either a Bool or a dictionary of conditions; a dictionary

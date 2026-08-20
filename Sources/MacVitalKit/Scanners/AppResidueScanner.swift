@@ -81,13 +81,34 @@ public struct AppResidueScanner: Scanner {
         if case .installed = match { return nil }
         if case .nameSimilar = match { return nil }
 
-        // Neither are the operating system's. Under `/Library` "matches no
+        let path = ProtectedPaths.normalize(url.path)
+
+        // A launchd job that still points at something on disk is not residue,
+        // whatever its filename suggests. Filename attribution is close to
+        // useless here: `com.docker.vmnetd.plist` matches no installed app
+        // because Docker Desktop's identifier is `com.docker.docker`, and
+        // `com.netease.uuremote.daemon.plist` matched nothing while
+        // UURemote.app sat in /Applications with its daemon running. Three
+        // working services were listed as the leftovers of uninstalled apps.
+        if url.pathExtension == "plist", LaunchItemAttribution.targetExists(forPlist: path) {
+            Log.scan.debug("skipping live launch item \(Log.path(path), privacy: .public)")
+            return nil
+        }
+
+        // Same argument from the other end: a privileged helper is named after
+        // its vendor, so nothing places it either — but the daemon that
+        // launches it does, and removing the helper breaks that daemon.
+        if LaunchItemAttribution.isReferencedByALaunchItem(path) {
+            Log.scan.debug("skipping referenced helper \(Log.path(path), privacy: .public)")
+            return nil
+        }
+
+        // Neither is the operating system's own. Under `/Library` "matches no
         // installed app" is not evidence of residue, because macOS installs
         // there and belongs to no app — `/Library/Application Support/BTServer`
         // is 46 Bluetooth country-code plists from a system update, and it was
         // being offered for removal. Asked last, and only for absolute
         // `/Library`, because the answer costs a subprocess.
-        let path = ProtectedPaths.normalize(url.path)
         if path.hasPrefix("/Library/"), PackageOwnership.isSystemProvided(path) {
             Log.scan.debug("skipping system-provided \(Log.path(path), privacy: .public)")
             return nil
