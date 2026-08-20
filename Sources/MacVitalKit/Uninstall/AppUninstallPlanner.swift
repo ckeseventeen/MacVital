@@ -150,10 +150,18 @@ public struct AppUninstallPlanner: Sendable {
         //    not identifiers, so guessing from the filename would be exactly
         //    the loose matching this planner avoids everywhere else. Read each
         //    bundle's own CFBundleIdentifier instead and match that.
-        for directory in Self.pluginDirectories(home: home) {
-            addBundlesIdentifying(directory, identifier: id, kind: .state,
-                                 ruleID: "residue.pluginBundles",
-                                 into: &candidates, seen: &seen, app: app)
+        //    The directory list lives in the catalog, next to the rules
+        //    generated from it, so a location cannot be added to one without
+        //    the other — a path the planner proposes with no matching rule is
+        //    denied as `patternMismatch` and shows up as a locked row.
+        for location in RuleCatalog.pluginLocations {
+            addBundlesIdentifying(
+                location.path.replacingOccurrences(of: "~", with: home),
+                identifier: id,
+                kind: .state,
+                ruleID: "residue.plugin.\(location.suffix)",
+                into: &candidates, seen: &seen, app: app
+            )
         }
 
         // 6. Sandbox containers macOS named with a UUID rather than the bundle
@@ -192,23 +200,6 @@ public struct AppUninstallPlanner: Sendable {
     }
 
     // MARK: - Plug-in bundles
-
-    static func pluginDirectories(home: String) -> [String] {
-        [
-            "\(home)/Library/Services",
-            "\(home)/Library/QuickLook",
-            "\(home)/Library/Internet Plug-Ins",
-            "\(home)/Library/PreferencePanes",
-            "\(home)/Library/Screen Savers",
-            "\(home)/Library/Widgets",
-            "\(home)/Library/Audio/Plug-Ins/Components",
-            "\(home)/Library/Audio/Plug-Ins/HAL",
-            "\(home)/Library/Audio/Plug-Ins/VST",
-            "\(home)/Library/Audio/Plug-Ins/VST3",
-            "\(home)/Library/Spotlight",
-            "\(home)/Library/Mail/Bundles",
-        ]
-    }
 
     private func addBundlesIdentifying(
         _ directory: String,

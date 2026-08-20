@@ -5,7 +5,7 @@ import Foundation
 /// can select it.
 public enum RuleCatalog {
     public static let all: [CleanupRule] =
-        developerResidue + projectArtifacts + appResidue + caches + userFiles + emptyFolders + appUninstall
+        developerResidue + projectArtifacts + appResidue + pluginResidue + caches + userFiles + emptyFolders + appUninstall
 
     // MARK: - Uninstall
 
@@ -453,19 +453,13 @@ public enum RuleCatalog {
             rationale: "系统为该 App 的帮助书生成的索引缓存。",
             autoSelectable: false
         ),
-        CleanupRule(
-            id: "residue.pluginBundles",
-            category: .appResidue,
-            // One pattern per location would be a dozen near-identical rules;
-            // the planner only ever produces a path it has already matched by
-            // reading the bundle's own CFBundleIdentifier, and the engine still
-            // re-checks this pattern before anything moves.
-            pattern: "~/Library/**",
-            kind: "插件与扩展",
-            rationale: "App 安装的服务、QuickLook、音频插件等扩展包。",
-            rebuildable: false,
-            autoSelectable: false
-        ),
+        // Plug-in locations get one rule each, generated from a single list —
+        // see `pluginResidue` below. A single `~/Library/**` rule was the first
+        // attempt and it was wrong: the whole point of this file is that
+        // reading a rule's pattern tells you the complete set of paths it can
+        // ever authorise, and a wildcard over all of ~/Library tells you
+        // nothing. That the planner happens to only produce plug-in paths today
+        // is not a property the catalog enforces.
         CleanupRule(
             id: "residue.systemCaches",
             category: .appResidue,
@@ -544,6 +538,43 @@ public enum RuleCatalog {
             allowedInUserData: true
         ),
     ]
+
+    // MARK: - Plug-in residue
+
+    /// The plug-in style locations an app can install into, and the rule id
+    /// each one is filed under.
+    ///
+    /// Generated rather than hand-written so the list of directories exists
+    /// exactly once — `AppUninstallPlanner` walks the same list. Every pattern
+    /// is a single literal directory plus one wildcard component, so the set of
+    /// paths any of these can authorise is exactly "the direct children of that
+    /// one directory".
+    static let pluginLocations: [(suffix: String, path: String, kind: String)] = [
+        ("services",       "~/Library/Services",                    "服务扩展"),
+        ("quickLook",      "~/Library/QuickLook",                   "QuickLook 插件"),
+        ("internetPlugIns", "~/Library/Internet Plug-Ins",          "浏览器插件"),
+        ("preferencePanes", "~/Library/PreferencePanes",            "偏好设置面板"),
+        ("screenSavers",   "~/Library/Screen Savers",               "屏幕保护"),
+        ("widgets",        "~/Library/Widgets",                     "桌面小组件"),
+        ("audioComponents", "~/Library/Audio/Plug-Ins/Components",  "音频单元"),
+        ("audioHAL",       "~/Library/Audio/Plug-Ins/HAL",          "音频驱动插件"),
+        ("audioVST",       "~/Library/Audio/Plug-Ins/VST",          "VST 插件"),
+        ("audioVST3",      "~/Library/Audio/Plug-Ins/VST3",         "VST3 插件"),
+        ("spotlight",      "~/Library/Spotlight",                   "Spotlight 导入器"),
+        ("mailBundles",    "~/Library/Mail/Bundles",                "邮件插件"),
+    ]
+
+    public static let pluginResidue: [CleanupRule] = pluginLocations.map { location in
+        CleanupRule(
+            id: "residue.plugin.\(location.suffix)",
+            category: .appResidue,
+            pattern: "\(location.path)/*",
+            kind: location.kind,
+            rationale: "\(location.kind)，由该 App 安装。归属的 App 已不在本机。",
+            rebuildable: false,
+            autoSelectable: false
+        )
+    }
 
     // MARK: - Empty folders
 

@@ -300,3 +300,62 @@ final class RuleEngineTests: XCTestCase {
         }
     }
 }
+
+/// Guards on the shape of the catalog itself.
+///
+/// The premise of this file is that reading a rule's pattern tells you the
+/// complete set of paths it can ever authorise. A wildcard that swallows a
+/// whole tree breaks that premise silently — and did: a plug-in rule shipped
+/// with `~/Library/**`, which authorises every path under Library, on the
+/// reasoning that the planner only ever produced plug-in paths. That is a
+/// property of today's caller, not of the catalog.
+extension RuleEngineTests {
+
+    /// Patterns whose breadth is deliberate, each for a stated reason.
+    private static let approvedBroadPatterns: Set<String> = [
+        // The user-file scanners produce paths anywhere the user keeps files;
+        // narrowing these would mean enumerating the whole home directory.
+        // Both are `autoSelectable: false` and their categories require
+        // item-by-item approval.
+        "~/**",
+        // Empty folders, restricted to Library and never auto-selected.
+        "~/Library/**",
+    ]
+
+    func testRulePatternsAreNotBroaderThanNecessary() {
+        for rule in RuleCatalog.all {
+            let raw = rule.pattern.raw
+            guard raw.hasSuffix("/**") else { continue }
+            guard !Self.approvedBroadPatterns.contains(raw) else { continue }
+
+            // A `**` deeper in the tree is fine — `~/Library/Caches/Yarn/**`
+            // still names exactly one directory. What is not fine is a `**`
+            // hanging directly off a top-level root.
+            let components = raw.split(separator: "/").dropLast()
+            XCTAssertGreaterThanOrEqual(
+                components.count, 3,
+                "\(rule.id) uses \(raw), which authorises far more than it needs to"
+            )
+        }
+    }
+
+    /// Every generated plug-in rule names exactly one directory.
+    func testPluginRulesNameASingleDirectory() {
+        XCTAssertFalse(RuleCatalog.pluginResidue.isEmpty)
+        for rule in RuleCatalog.pluginResidue {
+            XCTAssertTrue(
+                rule.pattern.raw.hasSuffix("/*"),
+                "\(rule.id) should match one directory's direct children, not \(rule.pattern.raw)"
+            )
+            XCTAssertFalse(rule.pattern.raw.contains("**"), "\(rule.id) must not recurse")
+            XCTAssertFalse(rule.autoSelectable, "\(rule.id) must not auto-select")
+        }
+    }
+
+    /// Rule ids have to be unique — `RuleIndex` keys on them, and a duplicate
+    /// would silently shadow whichever came second.
+    func testRuleIDsAreUnique() {
+        let ids = RuleCatalog.all.map(\.id)
+        XCTAssertEqual(Set(ids).count, ids.count, "duplicate rule ids: \(Dictionary(grouping: ids) { $0 }.filter { $0.value.count > 1 }.keys)")
+    }
+}

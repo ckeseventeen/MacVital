@@ -49,8 +49,7 @@ public struct EmptyDirectoryScanner: Scanner {
             // residue, and `ProtectedPaths` denies it anyway.
             for child in FileWalker.children(of: url) {
                 if Task.isCancelled { throw CancellationError() }
-                guard let item = try collect(child, depth: 1) else { continue }
-                items.append(item)
+                try collect(child, depth: 1, into: &items)
             }
         }
 
@@ -58,10 +57,18 @@ public struct EmptyDirectoryScanner: Scanner {
         return items.sorted { $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending }
     }
 
-    /// Returns an item when `url` is the top of an empty run, nil otherwise.
-    private func collect(_ url: URL, depth: Int) throws -> ScanItem? {
+    /// Appends `url` when it is the top of an empty run; otherwise descends
+    /// into it looking for empty runs further down.
+    ///
+    /// Descending is the whole point and the first version did not do it: it
+    /// only examined the direct children of each root, so
+    /// `Application Support/Vendor/` holding a config file *and* an empty
+    /// `Logs/` produced nothing at all — the parent was not empty, and the walk
+    /// stopped there. That is the single most common shape of the residue this
+    /// scanner exists to find.
+    private func collect(_ url: URL, depth: Int, into items: inout [ScanItem]) throws {
         if Task.isCancelled { throw CancellationError() }
-        guard depth <= maxDepth else { return nil }
+        guard depth <= maxDepth else { return }
         guard let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey, .isPackageKey]),
               values.isDirectory == true,
               values.isSymbolicLink != true,
@@ -69,12 +76,19 @@ public struct EmptyDirectoryScanner: Scanner {
               // is not residue, it is a shipped bundle, and proposing pieces of
               // one is how a working app gets broken.
               values.isPackage != true
-        else { return nil }
+        else { return }
 
-        guard let measurement = try measureEmptiness(url, depth: depth), measurement.isEmpty else { return nil }
+        guard let measurement = try measureEmptiness(url, depth: depth), measurement.isEmpty else {
+            // Not empty — but something inside it may be. Only this branch
+            // recurses, so an empty run is still reported once, at its top.
+            for child in FileWalker.children(of: url) {
+                try collect(child, depth: depth + 1, into: &items)
+            }
+            return
+        }
 
         let attributes = FileWalker.attributes(of: url)
-        return ScanItem(
+        items.append(ScanItem(
             path: ProtectedPaths.normalize(url.path),
             displayName: url.lastPathComponent,
             category: .emptyFolders,
@@ -90,7 +104,7 @@ public struct EmptyDirectoryScanner: Scanner {
             isDirectory: true,
             lastModified: attributes.modified,
             rebuildable: false
-        )
+        ))
     }
 
     private struct Emptiness {

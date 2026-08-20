@@ -159,4 +159,30 @@ final class EmptyDirectoryScannerTests: XCTestCase {
             XCTAssertNotNil(index.rule(for: item.ruleID), "unknown rule \(item.ruleID)")
         }
     }
+
+    // MARK: - Depth
+
+    /// The residue shape the feature actually exists for: a vendor folder that
+    /// still holds a config file, with an empty `Logs/` left inside it.
+    ///
+    /// The first version only ever looked at the direct children of each root,
+    /// so a run like this was invisible — the parent was not empty, and nothing
+    /// went further.
+    func testEmptyDirectoryInsideANonEmptyParentIsFound() async throws {
+        try makeFile("Vendor/config.json")
+        try makeDirectory("Vendor/Logs")
+
+        let names = try await scannedNames()
+        XCTAssertTrue(names.contains("Logs"), "an empty folder under a non-empty parent must still be found")
+        XCTAssertFalse(names.contains("Vendor"), "the parent has a file and is not empty")
+    }
+
+    func testDeeplyNestedEmptyDirectoryIsFound() async throws {
+        try makeFile("Vendor/config.json")
+        try makeFile("Vendor/Support/data.db")
+        try makeDirectory("Vendor/Support/Cache")
+
+        let names = try await scannedNames()
+        XCTAssertTrue(names.contains("Cache"))
+    }
 }
