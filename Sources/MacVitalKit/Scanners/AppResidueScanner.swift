@@ -11,7 +11,9 @@ import Foundation
 public struct AppResidueScanner: Scanner {
     public let category: ScanCategory = .appResidue
 
-    /// Anything owned by the OS is out of scope entirely.
+    /// A cheap first pass. Deliberately not the only one: a name-based deny
+    /// list can never be complete, which is why `/Library` paths also get
+    /// checked against the installer receipt database (see `makeItem`).
     private static let systemPrefixes = [
         "com.apple.", "group.com.apple.", "org.swift.", "com.macvital.",
     ]
@@ -78,6 +80,18 @@ public struct AppResidueScanner: Scanner {
         // An installed app's files are not residue. Stop here.
         if case .installed = match { return nil }
         if case .nameSimilar = match { return nil }
+
+        // Neither are the operating system's. Under `/Library` "matches no
+        // installed app" is not evidence of residue, because macOS installs
+        // there and belongs to no app — `/Library/Application Support/BTServer`
+        // is 46 Bluetooth country-code plists from a system update, and it was
+        // being offered for removal. Asked last, and only for absolute
+        // `/Library`, because the answer costs a subprocess.
+        let path = ProtectedPaths.normalize(url.path)
+        if path.hasPrefix("/Library/"), PackageOwnership.isSystemProvided(path) {
+            Log.scan.debug("skipping system-provided \(Log.path(path), privacy: .public)")
+            return nil
+        }
 
         let attributes = FileWalker.attributes(of: url)
         let measurement = attributes.isDirectory ? (try? FileWalker.measure(url)) : nil
