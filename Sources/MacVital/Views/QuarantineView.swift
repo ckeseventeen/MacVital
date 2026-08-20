@@ -153,15 +153,15 @@ struct QuarantineView: View {
                 // A row that needs root on a build that can never reach root
                 // gets an explanation and a way out, not two buttons that fail
                 // identically every time they are pressed.
-                if model.needsHelper(record) {
+                if let blocker = model.blocker(for: record) {
                     VStack(alignment: .trailing, spacing: 4) {
-                        Label("需要管理员权限", systemImage: "key.slash")
+                        Label(blocker.label, systemImage: blocker.symbolName)
                             .font(.caption)
                             .foregroundStyle(.orange)
                         Button("在访达中显示") { model.revealInFinder(record) }
                             .controlSize(.small)
                     }
-                    .help("当前构建是自签名的，无法使用特权助手（见「设置 → 安全」）。请在访达中手动处理。")
+                    .help(blocker.help)
                 } else {
                     VStack(spacing: 4) {
                         Button("还原") { Task { await model.restore(record) } }

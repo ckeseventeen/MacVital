@@ -86,6 +86,21 @@ public struct RuleEngine: Sendable {
             }
         }
 
+        // 5b. An ACL that denies deletion.
+        //
+        //     macOS puts `group:everyone deny delete` on several ~/Library
+        //     directories. None of the checks above sees it: the flags are
+        //     clear, the owner is the user, and `access(W_OK)` does not
+        //     evaluate ACL delete permission. So they passed, were moved into
+        //     quarantine, and then could be neither purged nor restored —
+        //     restoring has to move them back out. Two of them wedged a real
+        //     store until the ACL was stripped by hand.
+        if SIPGuard.hasDeleteDenyACL(at: resolved) {
+            return .deny(rule.id, .immutableFlag,
+                         "系统在这个目录上设置了「禁止删除」的访问控制列表（ACL），"
+                         + "移动它会让它既删不掉也还原不了。如确需处理，请先用 chmod -a# 手动移除该 ACL。")
+        }
+
         // 6. Never touch ourselves — the quarantine store above all.
         for prefix in selfProtectedPrefixes where protectedPaths.isUnder(resolved, prefix) {
             return .deny(rule.id, .selfProtection, "属于 MacVital 自身的数据（如隔离区），不参与清理。")

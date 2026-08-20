@@ -390,16 +390,25 @@ public actor QuarantineStore {
     }
 
     /// Turns a `removeItem` failure into something the user can act on.
+    ///
+    /// Checks the ACL before blaming permissions. The first version of this
+    /// text sent the user after Full Disk Access, which does nothing here: the
+    /// two directories that would not go away carried
+    /// `group:everyone deny delete`, and no amount of TCC or privilege lifts
+    /// that — `sudo rm` fails on it too.
     private static func explain(localFailure error: Error, at path: String) -> String {
+        if SIPGuard.hasDeleteDenyACL(at: path) {
+            return "\(PathRedaction.abbreviate(path)) 里有内容带着「禁止删除」的 ACL"
+                 + "（macOS 给 Spelling、FontCollections 这类目录加的保护），"
+                 + "所以它既删不掉也还原不了 —— 提升权限没有用。"
+                 + "在访达中打开后用终端执行 chmod -a# 0 <路径> 移除该 ACL，再回来操作。"
+        }
+
         let code = (error as NSError).code
         let posix = (error as NSError).userInfo[NSUnderlyingErrorKey] as? NSError
-
         if code == NSFileWriteNoPermissionError || code == NSFileReadNoPermissionError
             || posix?.code == Int(EPERM) || posix?.code == Int(EACCES) {
-            return "系统拒绝访问 \(PathRedaction.abbreviate(path))。"
-                 + "常见原因是缺少「完整磁盘访问权限」——某些目录（如 Spelling、FontCollections）"
-                 + "即使被移动过，系统仍按受保护内容对待。可在系统设置里补上权限并重启 App，"
-                 + "或在访达中手动删除。"
+            return "系统拒绝访问 \(PathRedaction.abbreviate(path))，可能缺少「完整磁盘访问权限」。"
         }
         return error.localizedDescription
     }

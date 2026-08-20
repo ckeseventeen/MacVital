@@ -62,4 +62,64 @@ public enum SIPGuard {
         let parent = (path as NSString).deletingLastPathComponent
         return access(parent, W_OK) == 0 && access(path, W_OK) == 0
     }
+
+    /// True when an ACL on the entry, or anywhere beneath it, denies deletion.
+    ///
+    /// macOS puts `group:everyone deny delete` on several directories under
+    /// `~/Library` — `Spelling`, `FontCollections`, `Favorites` and friends —
+    /// so a stray `rm -rf` cannot take them. Nothing above notices: `st_flags`
+    /// is clear, the owner is the user, the mode is 700, and `access(W_OK)`
+    /// does not evaluate the ACL's delete permission at all.
+    ///
+    /// So they passed every check, were moved into quarantine, and then could
+    /// not be deleted *or* restored — restoring has to move them out again.
+    /// Two of them wedged the store permanently, and the failure surfaced as a
+    /// code-signing complaint about the privileged helper, which is three
+    /// layers away from the truth.
+    ///
+    /// Checked recursively but bounded: the ACL is usually on the directory
+    /// itself, and walking an enormous tree to find one is not worth the cost
+    /// of the check running on every candidate.
+    public static func hasDeleteDenyACL(at path: String, maxEntries: Int = 512) -> Bool {
+        if entryDeniesDelete(path) { return true }
+
+        var visited = 0
+        guard let enumerator = FileManager.default.enumerator(
+            atPath: path
+        ) else { return false }
+
+        for case let relative as String in enumerator {
+            visited += 1
+            if visited > maxEntries { break }
+            if entryDeniesDelete((path as NSString).appendingPathComponent(relative)) { return true }
+        }
+        return false
+    }
+
+    private static func entryDeniesDelete(_ path: String) -> Bool {
+        guard let acl = acl_get_link_np(path, ACL_TYPE_EXTENDED) else { return false }
+        defer { acl_free(UnsafeMutableRawPointer(acl)) }
+
+        var entry: acl_entry_t?
+        var index = ACL_FIRST_ENTRY.rawValue
+        while acl_get_entry(acl, Int32(index), &entry) == 0 {
+            index = ACL_NEXT_ENTRY.rawValue
+            guard let entry else { continue }
+
+            var tag = ACL_EXTENDED_ALLOW
+            guard acl_get_tag_type(entry, &tag) == 0, tag == ACL_EXTENDED_DENY else { continue }
+            guard let permset = try? permissionSet(of: entry) else { continue }
+            if acl_get_perm_np(permset, ACL_DELETE) == 1 { return true }
+            if acl_get_perm_np(permset, ACL_DELETE_CHILD) == 1 { return true }
+        }
+        return false
+    }
+
+    private static func permissionSet(of entry: acl_entry_t) throws -> acl_permset_t {
+        var permset: acl_permset_t?
+        guard acl_get_permset(entry, &permset) == 0, let permset else {
+            throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+        }
+        return permset
+    }
 }
