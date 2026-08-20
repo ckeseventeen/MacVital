@@ -128,6 +128,62 @@ final class QuarantineStoreTests: XCTestCase {
         XCTAssertEqual(records.first?.displayName, "f.txt")
     }
 
+    /// The retention window is a live setting. It used to be captured once when
+    /// the store was constructed at launch, so changing it in Settings did
+    /// nothing until the next relaunch — while the confirm sheet went on
+    /// promising "N 天后才清除" with the new number.
+    func testRetentionIsReadAtStoreTimeNotAtInit() async throws {
+        let days = MutableDays(7)
+        let live = QuarantineStore(
+            root: sandbox.appendingPathComponent("Q3"),
+            retentionDaysProvider: { days.value }
+        )
+
+        let first = try await live.store(
+            item: item(at: try makeSource("h.txt")),
+            decision: .allow("cache.userCaches", "test"),
+            assessment: nil
+        )
+
+        days.value = 30
+        let second = try await live.store(
+            item: item(at: try makeSource("i.txt")),
+            decision: .allow("cache.userCaches", "test"),
+            assessment: nil
+        )
+
+        let gap = second.purgeAfter.timeIntervalSince(first.purgeAfter)
+        // ~23 days apart, allowing for the two calls not being simultaneous.
+        XCTAssertGreaterThan(gap, 22 * 24 * 3600)
+    }
+
+    /// A failed move must not leave its container behind: the sweep only visits
+    /// directories named by a manifest record, so an orphan created here is one
+    /// nothing in the app would ever collect.
+    func testFailedMoveLeavesNoOrphanContainer() async throws {
+        let source = try makeSource("j.txt")
+        let itemsDirectory = sandbox
+            .appendingPathComponent("Quarantine")
+            .appendingPathComponent("Items")
+
+        do {
+            // `allowWithPrivilege` with no privileged mover is a guaranteed
+            // failure *after* the container has been created.
+            _ = try await store.store(
+                item: item(at: source),
+                decision: .privileged("cache.userCaches", "test"),
+                assessment: nil
+            )
+            XCTFail("expected the store to refuse without a privileged mover")
+        } catch {
+            // expected
+        }
+
+        let leftovers = (try? FileManager.default.contentsOfDirectory(atPath: itemsDirectory.path)) ?? []
+        XCTAssertTrue(leftovers.isEmpty, "orphan containers left behind: \(leftovers)")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: source.path), "source should be untouched")
+    }
+
     func testAssessmentIsPreservedForLaterExplanation() async throws {
         let source = try makeSource("g.txt")
         let assessment = AIAssessment(
@@ -141,5 +197,19 @@ final class QuarantineStoreTests: XCTestCase {
             assessment: assessment
         )
         XCTAssertEqual(record.aiSummary, "这是缓存 会重建")
+    }
+}
+
+/// A retention value the test can change between calls, standing in for the
+/// user editing the setting mid-session.
+private final class MutableDays: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: Int
+
+    init(_ value: Int) { self.storage = value }
+
+    var value: Int {
+        get { lock.lock(); defer { lock.unlock() }; return storage }
+        set { lock.lock(); storage = newValue; lock.unlock() }
     }
 }

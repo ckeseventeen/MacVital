@@ -13,7 +13,8 @@ final class ScanViewModel: ObservableObject {
     }
 
     struct CleanupSummary: Equatable {
-        var reclaimedBytes: Int64
+        /// Moved into quarantine. Free space does not change until it expires.
+        var quarantinedBytes: Int64
         var removedCount: Int
         var skipped: [String]
     }
@@ -94,9 +95,15 @@ final class ScanViewModel: ObservableObject {
         let onProgress: @Sendable (ScanProgress) -> Void = { [weak self] progress in
             Task { @MainActor in
                 guard let self, self.scanGeneration == generation else { return }
-                self.progressText = "\(progress.category.title) · \(progress.message)"
+                self.progressText = [progress.category?.title, progress.message]
+                    .compactMap { $0 }
+                    .joined(separator: " · ")
                 if let fraction = progress.fraction {
-                    self.progressFraction = fraction
+                    // Each report reaches the main actor in its own `Task`, so
+                    // they can land out of order even though the engine only
+                    // ever emits a rising number. Clamping upward keeps the bar
+                    // from stuttering backwards; `startScan` resets it to 0.
+                    self.progressFraction = max(self.progressFraction, fraction)
                 }
             }
         }
@@ -193,14 +200,19 @@ final class ScanViewModel: ObservableObject {
             }
         )
 
-        let removedIDs = Set(outcome.removed.map(\.originalPath))
-        findings.removeAll { removedIDs.contains($0.item.path) }
+        let removedPaths = Set(outcome.removed.map(\.originalPath))
+        findings.removeAll { removedPaths.contains($0.item.path) }
         selection = []
 
         await environment.refreshQuarantine()
+        // The quarantine total just changed and the dashboard shows it. Free
+        // space has not moved — quarantine is on the same volume — but the tile
+        // beside it has, and leaving both stale until the next window reopen
+        // made the whole overview look frozen.
+        environment.refreshDiskSpace()
 
         phase = .done(CleanupSummary(
-            reclaimedBytes: outcome.reclaimedBytes,
+            quarantinedBytes: outcome.quarantinedBytes,
             removedCount: outcome.removed.count,
             skipped: outcome.skipped.map { "\($0.item.displayName)：\($0.reason)" }
         ))

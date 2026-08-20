@@ -15,14 +15,28 @@ import Foundation
 public struct ProtectedPaths: Sendable {
     public let home: String
 
+    /// Built once in `init`, not on every query.
+    ///
+    /// These were computed properties, so each call to `isHardDenied` rebuilt a
+    /// 22-element array with fourteen string interpolations *and* a 22-element
+    /// `Set`. `RuleEngine` calls it twice per item, once against the declared
+    /// path and once against the resolved one, so a scan of a few thousand
+    /// candidates was doing tens of thousands of pointless allocations.
+    private let hardDenyPrefixes: [String]
+    private let criticalExactPaths: Set<String>
+    private let sensitiveRoots: [String]
+
     public init(home: String = PathRedaction.home) {
         self.home = home
+        self.hardDenyPrefixes = Self.makeHardDenyPrefixes(home: home)
+        self.criticalExactPaths = Self.makeCriticalExactPaths(home: home)
+        self.sensitiveRoots = Self.makeSensitiveRoots(home: home)
     }
 
     // MARK: - Tier 1: absolute
 
     /// Directory prefixes that are never removable, at any depth.
-    private var hardDenyPrefixes: [String] {
+    private static func makeHardDenyPrefixes(home: String) -> [String] {
         [
             "/System",
             "/bin",
@@ -66,7 +80,7 @@ public struct ProtectedPaths: Sendable {
 
     /// Exact paths that must never be the target of a removal, even though
     /// things *inside* them may be.
-    private var criticalExactPaths: Set<String> {
+    private static func makeCriticalExactPaths(home: String) -> Set<String> {
         [
             "/", "/Users", "/Volumes", "/Applications", "/Library", "/private", "/opt", "/usr", "/tmp", "/var",
             home,
@@ -95,7 +109,7 @@ public struct ProtectedPaths: Sendable {
     // MARK: - Tier 2: conditional
 
     /// User data roots. Denied by default; a rule may opt in.
-    private var sensitiveRoots: [String] {
+    private static func makeSensitiveRoots(home: String) -> [String] {
         [
             "\(home)/Documents",
             "\(home)/Desktop",

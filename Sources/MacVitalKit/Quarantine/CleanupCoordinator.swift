@@ -3,12 +3,18 @@ import Foundation
 public struct CleanupOutcome: Sendable {
     public var removed: [QuarantineRecord]
     public var skipped: [(item: ScanItem, reason: String)]
-    public var reclaimedBytes: Int64
+    /// Bytes moved into quarantine — **not** bytes returned to the volume.
+    ///
+    /// The quarantine store is on the same disk, so free space does not change
+    /// until the retention window expires. This was called `reclaimedBytes` and
+    /// the UI duly reported "已回收 X"; users then looked at their free space,
+    /// saw it unmoved, and concluded the app had lied to them. It had.
+    public var quarantinedBytes: Int64
 
-    public init(removed: [QuarantineRecord], skipped: [(item: ScanItem, reason: String)], reclaimedBytes: Int64) {
+    public init(removed: [QuarantineRecord], skipped: [(item: ScanItem, reason: String)], quarantinedBytes: Int64) {
         self.removed = removed
         self.skipped = skipped
-        self.reclaimedBytes = reclaimedBytes
+        self.quarantinedBytes = quarantinedBytes
     }
 }
 
@@ -53,7 +59,7 @@ public struct CleanupCoordinator: Sendable {
 
         var removed: [QuarantineRecord] = []
         var skipped: [(ScanItem, String)] = []
-        var reclaimed: Int64 = 0
+        var quarantined: Int64 = 0
 
         for (index, finding) in targets.enumerated() {
             progress(index, targets.count, finding.item.displayName)
@@ -99,7 +105,7 @@ public struct CleanupCoordinator: Sendable {
                     }
                 )
                 removed.append(record)
-                reclaimed += record.sizeBytes
+                quarantined += record.sizeBytes
             } catch {
                 skipped.append((finding.item, error.localizedDescription))
                 Log.quarantine.error("failed \(Log.path(finding.item.path), privacy: .public): \(error.localizedDescription, privacy: .public)")
@@ -107,7 +113,7 @@ public struct CleanupCoordinator: Sendable {
         }
 
         progress(targets.count, targets.count, "")
-        return CleanupOutcome(removed: removed, skipped: skipped, reclaimedBytes: reclaimed)
+        return CleanupOutcome(removed: removed, skipped: skipped, quarantinedBytes: quarantined)
     }
 
     // MARK: - Quarantine management

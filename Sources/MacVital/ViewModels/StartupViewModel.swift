@@ -7,10 +7,22 @@ final class StartupViewModel: ObservableObject {
     struct Row: Identifiable {
         let item: LoginItem
         let decision: RuleDecision
+        /// Built once, in `init`, and stored.
+        ///
+        /// This was a computed property, and `LoginItemScanner.scanItem(for:)`
+        /// mints a fresh `ScanItem.id` on every call. So `rows.map(\.finding)`
+        /// and `Set(rows.map(\.finding.id))` produced two disjoint sets of
+        /// UUIDs, the coordinator's `findings.filter { selection.contains(…) }`
+        /// matched nothing, and "停用" moved nothing while reporting success.
+        let finding: Finding
+
         var id: String { item.id }
         var isSelectable: Bool { !decision.isDenied }
-        var finding: Finding {
-            Finding(item: LoginItemScanner.scanItem(for: item), decision: decision)
+
+        init(item: LoginItem, decision: RuleDecision) {
+            self.item = item
+            self.decision = decision
+            self.finding = Finding(item: LoginItemScanner.scanItem(for: item), decision: decision)
         }
     }
 
@@ -18,7 +30,6 @@ final class StartupViewModel: ObservableObject {
     @Published var selection: Set<String> = []
     @Published private(set) var isLoading = false
     @Published private(set) var isRemoving = false
-    @Published var errorMessage: String?
     @Published private(set) var summary: String?
     @Published var showOnlyOrphaned = false
 
@@ -93,10 +104,12 @@ final class StartupViewModel: ObservableObject {
         isRemoving = true
         defer { isRemoving = false }
 
-        let targets = rows.filter { selection.contains($0.id) }
+        // One array, used for both arguments. Deriving the selection from a
+        // second traversal is what broke this before.
+        let findings = rows.filter { selection.contains($0.id) }.map(\.finding)
         let outcome = await environment.coordinator.execute(
-            findings: targets.map(\.finding),
-            selection: Set(targets.map(\.finding.id))
+            findings: findings,
+            selection: Set(findings.map(\.id))
         )
 
         await environment.refreshQuarantine()

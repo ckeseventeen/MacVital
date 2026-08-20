@@ -48,17 +48,11 @@ struct StartupPage: View {
             footer
         }
         .task { await model.reload() }
-        .alert(
-            "操作失败",
-            isPresented: Binding(
-                get: { model.errorMessage != nil },
-                set: { if !$0 { model.errorMessage = nil } }
-            )
-        ) {
-            Button("好") { model.errorMessage = nil }
-        } message: {
-            Text(model.errorMessage ?? "")
-        }
+        // No error alert here on purpose. There used to be one bound to an
+        // `errorMessage` that nothing ever assigned — a modal that could not
+        // appear. Per-item failures come back in `outcome.skipped` and are
+        // shown inline in the summary, which is both truthful and less
+        // interruptive.
         .confirmationDialog("停用选中的 \(model.selection.count) 个启动项？", isPresented: $confirming, titleVisibility: .visible) {
             Button("停用", role: .destructive) { Task { await model.disableSelected() } }
             Button("取消", role: .cancel) {}

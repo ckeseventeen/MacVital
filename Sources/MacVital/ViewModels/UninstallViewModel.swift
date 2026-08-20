@@ -7,11 +7,19 @@ final class UninstallViewModel: ObservableObject {
     struct Row: Identifiable {
         let candidate: AppUninstallPlanner.Candidate
         let decision: RuleDecision
+        /// Stored rather than computed: SwiftUI re-evaluates row bodies
+        /// constantly, and there is no reason to rebuild a value that cannot
+        /// change. (`candidate.item` already carries a stable id, so unlike the
+        /// startup list this was never wrong — only wasteful.)
+        let finding: Finding
+
         var id: UUID { candidate.id }
         var isSelectable: Bool { !decision.isDenied }
 
-        var finding: Finding {
-            Finding(item: candidate.item, decision: decision)
+        init(candidate: AppUninstallPlanner.Candidate, decision: RuleDecision) {
+            self.candidate = candidate
+            self.decision = decision
+            self.finding = Finding(item: candidate.item, decision: decision)
         }
     }
 
@@ -22,7 +30,6 @@ final class UninstallViewModel: ObservableObject {
     @Published var selection: Set<UUID> = []
     @Published private(set) var isPlanning = false
     @Published private(set) var isRemoving = false
-    @Published var errorMessage: String?
     @Published private(set) var summary: String?
 
     private let environment: AppEnvironment
@@ -220,8 +227,12 @@ final class UninstallViewModel: ObservableObject {
         )
 
         await environment.refreshQuarantine()
+        environment.refreshDiskSpace()
 
-        var lines = ["已将 \(outcome.removed.count) 项移入隔离区，回收 \(ByteFormat.string(outcome.reclaimedBytes))。"]
+        var lines = [
+            "已将 \(outcome.removed.count) 项（\(ByteFormat.string(outcome.quarantinedBytes))）移入隔离区，"
+            + "\(AppSettings.currentRetentionDays()) 天后自动删除，届时才会释放空间。"
+        ]
         if !outcome.skipped.isEmpty {
             lines.append("跳过 \(outcome.skipped.count) 项：" + outcome.skipped.prefix(3).map(\.reason).joined(separator: "；"))
         }

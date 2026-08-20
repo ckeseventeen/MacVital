@@ -44,10 +44,11 @@ final class AppEnvironment: ObservableObject {
 
     init() {
         // The retention window is a user setting, and the confirm sheet quotes
-        // it back to them ("N 天后才清除"). Read it here rather than letting the
-        // store fall back to its 7-day default, or the promise is a lie.
+        // it back to them ("N 天后才清除"). Passed as a closure, not a value:
+        // reading it once here meant changing the setting did nothing until the
+        // next launch, while the sheet went on quoting the new number.
         let settings = AppSettings()
-        let store = QuarantineStore(retentionDays: settings.retentionDays)
+        let store = QuarantineStore(retentionDaysProvider: { AppSettings.currentRetentionDays() })
         self.settings = settings
         self.quarantine = store
         self.quarantineRoot = store.root.path

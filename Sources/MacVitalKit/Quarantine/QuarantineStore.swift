@@ -16,11 +16,18 @@ public actor QuarantineStore {
     public nonisolated let root: URL
     private let itemsDirectory: URL
     private let manifestURL: URL
-    private let retentionDays: Int
+    /// A closure, not a stored `Int`.
+    ///
+    /// The retention window is a live user setting, and it used to be captured
+    /// once when the store was constructed at launch. Changing it in Settings
+    /// then did nothing until the next relaunch — while the confirm sheet went
+    /// on promising "N 天后才清除" with the *new* number. Reading it at the
+    /// moment an expiry is stamped is the only version of this that is true.
+    private let retentionDays: @Sendable () -> Int
     private var records: [QuarantineRecord] = []
     private var loaded = false
 
-    public init(root: URL? = nil, retentionDays: Int = QuarantineStore.defaultRetentionDays) {
+    public init(root: URL? = nil, retentionDaysProvider: @escaping @Sendable () -> Int) {
         let base = root ?? FileManager.default
             .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("MacVital", isDirectory: true)
@@ -28,7 +35,13 @@ public actor QuarantineStore {
         self.root = base
         self.itemsDirectory = base.appendingPathComponent("Items", isDirectory: true)
         self.manifestURL = base.appendingPathComponent("manifest.json")
-        self.retentionDays = retentionDays
+        self.retentionDays = retentionDaysProvider
+    }
+
+    /// Fixed-window convenience, for tests and for callers with no setting to
+    /// read.
+    public init(root: URL? = nil, retentionDays: Int = QuarantineStore.defaultRetentionDays) {
+        self.init(root: root, retentionDaysProvider: { retentionDays })
     }
 
     // MARK: - Lifecycle
@@ -93,11 +106,19 @@ public actor QuarantineStore {
         try FileManager.default.createDirectory(at: container, withIntermediateDirectories: true)
         let destination = container.appendingPathComponent(source.lastPathComponent)
 
-        if decision.admission == .allowWithPrivilege {
-            guard let privilegedMove else { throw QuarantineError.privilegeRequired }
-            try await privilegedMove(source.path, destination.path)
-        } else {
-            try moveOrCopy(from: source, to: destination)
+        // A failed move must not leave its container behind. The sweep only
+        // ever visits directories named by a manifest record, so an orphan
+        // created here is one nothing in the app will ever collect.
+        do {
+            if decision.admission == .allowWithPrivilege {
+                guard let privilegedMove else { throw QuarantineError.privilegeRequired }
+                try await privilegedMove(source.path, destination.path)
+            } else {
+                try moveOrCopy(from: source, to: destination)
+            }
+        } catch {
+            try? FileManager.default.removeItem(at: container)
+            throw error
         }
 
         let record = QuarantineRecord(
@@ -107,7 +128,7 @@ public actor QuarantineStore {
             displayName: item.displayName,
             category: item.category,
             sizeBytes: item.sizeBytes,
-            purgeAfter: Calendar.current.date(byAdding: .day, value: retentionDays, to: Date()) ?? Date(),
+            purgeAfter: Calendar.current.date(byAdding: .day, value: retentionDays(), to: Date()) ?? Date(),
             ruleID: decision.ruleID,
             rationale: decision.rationale,
             aiSummary: assessment.map { "\($0.whatItIs) \($0.consequence)" },

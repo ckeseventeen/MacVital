@@ -18,7 +18,7 @@ public struct DuplicateFileScanner: Scanner {
 
     public func scan(context: ScanContext, progress: @Sendable (ScanProgress) -> Void) async throws -> [ScanItem] {
         progress(ScanProgress(category: category, message: "建立索引", fraction: 0.1))
-        let candidates = try collectCandidates(context: context)
+        let candidates = try await collectCandidates(context: context)
 
         // Phase 1 — size. Anything with a unique size cannot have a duplicate.
         var bySize: [Int64: [URL]] = [:]
@@ -51,10 +51,22 @@ public struct DuplicateFileScanner: Scanner {
         }
 
         var items: [ScanItem] = []
-        for (digest, urls) in byHash where urls.count > 1 {
-            let ordered = urls.sorted { lhs, rhs in
-                let l = FileWalker.attributes(of: lhs).modified ?? .distantFuture
-                let r = FileWalker.attributes(of: rhs).modified ?? .distantFuture
+        for (digest, urls) in byHash {
+            // Distinct paths only. Two entries for one path — overlapping scan
+            // roots, or the same file reached twice — would otherwise make a
+            // file a duplicate of itself and offer the only copy for removal.
+            let unique = Array(Set(urls.map(\.path))).map(URL.init(fileURLWithPath:))
+            guard unique.count > 1 else { continue }
+
+            // Oldest wins, by creation date, exactly as documented. This read
+            // `contentModificationDate`, which is a different question with a
+            // different answer: copying a file usually preserves its mtime
+            // while giving it a fresh birth time, so the two can disagree about
+            // which copy is the original — the one thing this must not get
+            // wrong, since it decides which file survives.
+            let ordered = unique.sorted { lhs, rhs in
+                let l = Self.creationDate(of: lhs) ?? .distantFuture
+                let r = Self.creationDate(of: rhs) ?? .distantFuture
                 if l != r { return l < r }
                 return lhs.path.count < rhs.path.count
             }
@@ -67,6 +79,9 @@ public struct DuplicateFileScanner: Scanner {
                     category: .duplicateFiles,
                     ruleID: "file.duplicate",
                     kindHint: "副本，保留 \(PathRedaction.abbreviate(keeper.path))",
+                    // Allocated size here on purpose: this is what the disk
+                    // actually hands back, which is the number the summary adds
+                    // up. Only the *grouping* has to use logical length.
                     sizeBytes: FileWalker.size(of: duplicate),
                     fileCount: 1,
                     isDirectory: false,
@@ -92,30 +107,52 @@ public struct DuplicateFileScanner: Scanner {
         let size: Int64
     }
 
-    private func collectCandidates(context: ScanContext) throws -> [Candidate] {
-        let keys: [URLResourceKey] = [.isRegularFileKey, .isSymbolicLinkKey, .totalFileAllocatedSizeKey]
+    /// `.fileSizeKey`, the logical length — not `.totalFileAllocatedSize`.
+    ///
+    /// Allocated size is block-rounded and includes metadata, which broke this
+    /// twice over: byte-identical files whose on-disk footprint differs (HFS
+    /// compression, a resource fork, a different volume's block size) never
+    /// landed in the same size bucket and were missed outright; and the tail
+    /// sample below seeked to `size - sampleSize`, which on a rounded-up size
+    /// is past EOF, so the read came back empty and the "head+tail" digest
+    /// silently degraded to head-only — throwing away the cheap filter that
+    /// keeps the full SHA-256 pass small.
+    private static let sizeKeys: [URLResourceKey] = [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey]
+
+    private func collectCandidates(context: ScanContext) async throws -> [Candidate] {
         var candidates: [Candidate] = []
+        var seen = 0
 
         for rootPath in context.options.userFileRoots {
             let root = URL(fileURLWithPath: rootPath)
             guard FileWalker.exists(root) else { continue }
             guard let enumerator = FileManager.default.enumerator(
                 at: root,
-                includingPropertiesForKeys: keys,
+                includingPropertiesForKeys: Self.sizeKeys,
                 options: [.skipsPackageDescendants, .skipsHiddenFiles],
                 errorHandler: { _, _ in true }
             ) else { continue }
 
             for case let url as URL in enumerator {
                 if Task.isCancelled { throw CancellationError() }
-                guard let values = try? url.resourceValues(forKeys: Set(keys)) else { continue }
+                // This walk is the longest uninterrupted stretch of the whole
+                // scan. Yielding periodically keeps the other scanners in the
+                // group moving and lets cancellation land promptly.
+                seen += 1
+                if seen % 2_000 == 0 { await Task.yield() }
+
+                guard let values = try? url.resourceValues(forKeys: Set(Self.sizeKeys)) else { continue }
                 guard values.isRegularFile == true, values.isSymbolicLink != true else { continue }
-                let size = Int64(values.totalFileAllocatedSize ?? 0)
+                let size = Int64(values.fileSize ?? 0)
                 guard size >= minimumSize else { continue }
                 candidates.append(Candidate(url: url, size: size))
             }
         }
         return candidates
+    }
+
+    private static func creationDate(of url: URL) -> Date? {
+        (try? url.resourceValues(forKeys: [.creationDateKey]))?.creationDate
     }
 
     // MARK: - Digests

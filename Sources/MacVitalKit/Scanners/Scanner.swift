@@ -53,12 +53,16 @@ public struct ScanContext: Sendable {
 }
 
 public struct ScanProgress: Sendable {
-    public var category: ScanCategory
+    /// nil for phases that belong to no single category — the explanation pass
+    /// at the end. That step used to be reported as `.developerResidue`, which
+    /// put "开发者残留 · 生成说明" on screen while nothing of the sort was
+    /// happening.
+    public var category: ScanCategory?
     public var message: String
     /// nil while the total is unknown.
     public var fraction: Double?
 
-    public init(category: ScanCategory, message: String, fraction: Double? = nil) {
+    public init(category: ScanCategory?, message: String, fraction: Double? = nil) {
         self.category = category
         self.message = message
         self.fraction = fraction

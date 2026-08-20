@@ -24,12 +24,22 @@ public struct RunningProcessIndex: Sendable {
 
     public let entries: [Entry]
     private let runningBundleIDs: Set<String>
+    /// Every ancestor directory of every running executable, plus the
+    /// executables themselves.
+    ///
+    /// `executingProcess(under:)` used to scan the whole entry list per query,
+    /// prefix-comparing strings. With ~600 processes on an ordinary Mac and a
+    /// few thousand candidates — each evaluated twice — that is millions of
+    /// comparisons. A candidate path can only contain a running executable if
+    /// it appears in this set, so the common case (no match) becomes one hash
+    /// lookup and the linear scan runs only for the handful that do match.
+    private let occupiedPrefixes: Set<String>
 
     public init(entries: [Entry]) {
         // Executable paths are compared against realpath-resolved candidates,
         // so they have to go through the same normalisation. NSWorkspace and
         // proc_pidpath do not agree on /var vs /private/var.
-        self.entries = entries.map { entry in
+        let normalized = entries.map { entry in
             Entry(
                 pid: entry.pid,
                 executablePath: ProtectedPaths.normalize(entry.executablePath),
@@ -37,7 +47,20 @@ public struct RunningProcessIndex: Sendable {
                 localizedName: entry.localizedName
             )
         }
-        self.runningBundleIDs = Set(entries.compactMap { $0.bundleIdentifier?.lowercased() })
+        self.entries = normalized
+        self.runningBundleIDs = Set(normalized.compactMap { $0.bundleIdentifier?.lowercased() })
+
+        var prefixes = Set<String>()
+        for entry in normalized where !entry.executablePath.isEmpty {
+            var path = entry.executablePath
+            while path.count > 1 {
+                prefixes.insert(path)
+                let parent = (path as NSString).deletingLastPathComponent
+                if parent == path || parent.isEmpty { break }
+                path = parent
+            }
+        }
+        self.occupiedPrefixes = prefixes
     }
 
     public static func snapshot() -> RunningProcessIndex {
@@ -68,6 +91,7 @@ public struct RunningProcessIndex: Sendable {
     /// A process whose executable lives under `path` — deleting it would kill
     /// a running program.
     public func executingProcess(under path: String) -> Entry? {
+        guard occupiedPrefixes.contains(path) else { return nil }
         let prefix = path.hasSuffix("/") ? path : path + "/"
         return entries.first { $0.executablePath == path || $0.executablePath.hasPrefix(prefix) }
     }

@@ -56,12 +56,27 @@ final class AppSettings: ObservableObject {
     @AppStorage("advisorMode") var advisorMode: AdvisorMode = .offline
     @AppStorage("localModelEndpoint") var localModelEndpoint: String = "http://127.0.0.1:11434/api/chat"
     @AppStorage("localModelName") var localModelName: String = "qwen2.5:3b"
-    @AppStorage("retentionDays") var retentionDays: Int = QuarantineStore.defaultRetentionDays
+    @AppStorage(AppSettings.retentionDaysKey) var retentionDays: Int = QuarantineStore.defaultRetentionDays
     @AppStorage("largeFileThresholdMB") var largeFileThresholdMB: Int = 256
     @AppStorage("projectSearchDepth") var projectSearchDepth: Int = 5
     @AppStorage("projectRootsRaw") private var projectRootsRaw: String = ""
 
     @Published var hasCloudKey: Bool = KeychainStore.has(.anthropicAPIKey)
+
+    nonisolated static let retentionDaysKey = "retentionDays"
+
+    /// The retention window, readable from off the main actor.
+    ///
+    /// `QuarantineStore` is an actor and stamps an expiry at the moment an item
+    /// moves in, so it needs the value that is set *then* — not the one that
+    /// happened to be set when `AppSettings` was constructed. `@AppStorage`
+    /// inside an `ObservableObject` publishes nothing, so there is no
+    /// notification to subscribe to either; reading the backing store directly
+    /// is both the simplest and the only reliably current answer.
+    nonisolated static func currentRetentionDays() -> Int {
+        let stored = UserDefaults.standard.integer(forKey: retentionDaysKey)
+        return stored > 0 ? stored : QuarantineStore.defaultRetentionDays
+    }
 
     var projectRoots: [String] {
         get {

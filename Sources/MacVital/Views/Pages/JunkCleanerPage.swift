@@ -14,10 +14,16 @@ struct JunkCleanerPage: View {
         VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 22) {
                 header
-                if model.phase == .idle && model.findings.isEmpty {
-                    emptyState
-                } else {
+                // The summary card is about results, so it only appears when
+                // there are some. It used to render for anything that was not
+                // idle-and-empty, which meant that during a scan — phase
+                // `.scanning`, findings still empty — the page showed
+                // "发现 0 B 可回收 · 0 个类别" above a spinning progress bar.
+                if !model.findings.isEmpty {
                     summaryCard
+                    categoryFilter
+                } else if !model.isScanning {
+                    emptyState
                 }
             }
             .padding(.horizontal, Theme.Metric.pagePaddingH)
@@ -43,13 +49,51 @@ struct JunkCleanerPage: View {
 
     private var header: some View {
         PageHeader(title: "垃圾清理", subtitle: subtitle) {
-            Button(model.isScanning ? "扫描中…" : "重新扫描") {
-                Task { await model.startScan() }
+            HStack(spacing: 10) {
+                scopeMenu
+                Button(model.isScanning ? "扫描中…" : "重新扫描") {
+                    Task { await model.startScan() }
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.regular)
+                .disabled(model.isScanning || model.isCleaning)
             }
-            .buttonStyle(.bordered)
-            .controlSize(.regular)
-            .disabled(model.isScanning || model.isCleaning)
         }
+    }
+
+    /// `enabledCategories` has been on the view model since the beginning and
+    /// nothing ever wrote to it — so every scan swept everything, including the
+    /// duplicate-file pass, which is by far the slowest. This is the control
+    /// that was missing.
+    private var scopeMenu: some View {
+        Menu {
+            ForEach(ScanCategory.sweepCategories) { category in
+                Toggle(category.title, isOn: Binding(
+                    get: { model.enabledCategories.contains(category) },
+                    set: { isOn in
+                        if isOn {
+                            model.enabledCategories.insert(category)
+                        } else if model.enabledCategories.count > 1 {
+                            // Never let the set empty out: a scan with no
+                            // categories finds nothing and looks like a bug.
+                            model.enabledCategories.remove(category)
+                        }
+                    }
+                ))
+            }
+        } label: {
+            Label(scopeLabel, systemImage: "line.3.horizontal.decrease.circle")
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .disabled(model.isScanning || model.isCleaning)
+        .help("选择这次扫描要走哪些类别")
+    }
+
+    private var scopeLabel: String {
+        let enabled = model.enabledCategories.count
+        let total = ScanCategory.sweepCategories.count
+        return enabled == total ? "全部类别" : "\(enabled)/\(total) 类别"
     }
 
     private var subtitle: String {
@@ -100,11 +144,18 @@ struct JunkCleanerPage: View {
                 lineWidth: 7,
                 tint: Theme.junk
             ) {
+                // The number inside the ring now matches what the ring is
+                // filled to. It used to show the *total* while the arc showed
+                // selected-over-total, which read as "this number is that far
+                // along" — two different quantities in one glyph.
                 VStack(spacing: 0) {
-                    Text(ByteFormat.compact(model.totalFoundBytes))
+                    Text(ByteFormat.compact(model.selectedBytes))
                         .font(.system(size: 16, weight: .medium))
                         .monospacedDigit()
                         .foregroundStyle(Theme.junk)
+                    Text("已选")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Theme.tertiaryLabel)
                 }
             }
             .frame(width: 88, height: 88)
@@ -125,14 +176,15 @@ struct JunkCleanerPage: View {
 
             Spacer(minLength: 0)
 
+            // The byte count moved into the ring, so this column carries the
+            // item count instead of repeating it.
             VStack(alignment: .trailing, spacing: 2) {
-                Text("已选 \(ByteFormat.string(model.selectedBytes))")
-                    .font(.system(size: 13, weight: .medium))
+                Text("\(model.selection.count) / \(model.findings.filter(\.isSelectable).count)")
+                    .font(.system(size: 16, weight: .medium))
                     .monospacedDigit()
                     .foregroundStyle(Theme.label)
-                Text("\(model.selection.count) / \(model.findings.filter(\.isSelectable).count) 项")
+                Text("项已勾选")
                     .font(.system(size: 12))
-                    .monospacedDigit()
                     .foregroundStyle(Theme.secondaryLabel)
             }
         }
@@ -147,8 +199,45 @@ struct JunkCleanerPage: View {
         return Double(model.selectedBytes) / Double(total)
     }
 
+    /// Counted over selectable findings only, to match `totalFoundBytes` on the
+    /// same card. Counting every finding meant "N 个类别" and "X 可回收" were
+    /// describing two different sets of rows.
     private var categoryCount: Int {
-        Set(model.findings.map(\.item.category)).count
+        Set(model.findings.filter(\.isSelectable).map(\.item.category)).count
+    }
+
+    // MARK: - Category filter
+
+    /// `focusedCategory` was never assigned anywhere, so `visibleFindings`
+    /// always returned everything and the footer's "全选" was always global.
+    /// These chips are what was supposed to drive it.
+    private var categoryFilter: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                FilterChip(
+                    title: "全部",
+                    count: model.findings.count,
+                    tint: Theme.accent,
+                    isOn: model.focusedCategory == nil
+                ) { model.focusedCategory = nil }
+
+                ForEach(presentCategories) { category in
+                    FilterChip(
+                        title: category.title,
+                        count: model.count(in: category),
+                        tint: category.tint,
+                        isOn: model.focusedCategory == category
+                    ) {
+                        model.focusedCategory = model.focusedCategory == category ? nil : category
+                    }
+                }
+            }
+            .padding(.vertical, 1)
+        }
+    }
+
+    private var presentCategories: [ScanCategory] {
+        ScanCategory.allCases.filter { model.count(in: $0) > 0 }
     }
 
     // MARK: - Footer
@@ -162,19 +251,32 @@ struct JunkCleanerPage: View {
                     .monospacedDigit()
                     .foregroundStyle(Theme.secondaryLabel)
             } else {
-                Text("可回收 ")
+                Text("已选 ")
                     .font(.system(size: 13))
                     .foregroundStyle(Theme.secondaryLabel)
                 + Text(ByteFormat.string(model.selectedBytes))
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(Theme.label)
+                + Text("，移入隔离区后 \(environment.settings.retentionDays) 天释放")
+                    .font(.system(size: 13))
+                    .foregroundStyle(Theme.secondaryLabel)
             }
 
             Spacer()
 
-            Button("全选") { model.selectAll(in: model.focusedCategory) }
-                .buttonStyle(.link)
-                .font(.system(size: 13))
+            Button(model.focusedCategory == nil ? "全选" : "全选本类") {
+                model.selectAll(in: model.focusedCategory)
+            }
+            .buttonStyle(.link)
+            .font(.system(size: 13))
+            // The other two list pages have had this since the start; only the
+            // main cleaner was missing it.
+            Button(model.focusedCategory == nil ? "全不选" : "全不选本类") {
+                model.deselectAll(in: model.focusedCategory)
+            }
+            .buttonStyle(.link)
+            .font(.system(size: 13))
+            .disabled(model.selection.isEmpty)
             Button("恢复推荐") { model.resetToRecommended() }
                 .buttonStyle(.link)
                 .font(.system(size: 13))
@@ -195,5 +297,38 @@ struct JunkCleanerPage: View {
         .padding(.horizontal, Theme.Metric.pagePaddingH)
         .padding(.vertical, Theme.Metric.barPaddingV)
         .glassChrome()
+    }
+}
+
+// MARK: - Filter chip
+
+private struct FilterChip: View {
+    let title: String
+    let count: Int
+    let tint: Color
+    let isOn: Bool
+    let action: () -> Void
+
+    @State private var isHovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 5) {
+                Text(title)
+                    .font(.system(size: 12, weight: isOn ? .medium : .regular))
+                Text("\(count)")
+                    .font(.system(size: 11, weight: .medium))
+                    .monospacedDigit()
+                    .opacity(0.75)
+            }
+            .foregroundStyle(isOn ? tint : Theme.secondaryLabel)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(Capsule().fill(tint.opacity(isOn ? 0.16 : (isHovering ? 0.08 : 0))))
+            .overlay(Capsule().strokeBorder(isOn ? tint.opacity(0.45) : Theme.separator, lineWidth: 1))
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovering = $0 }
     }
 }

@@ -162,14 +162,21 @@ struct CleanupSummaryView: View {
                 .background(Circle().fill(Theme.success.opacity(0.15)).frame(width: 74, height: 74))
                 .padding(.bottom, 8)
 
-            Text("已回收 \(ByteFormat.string(summary.reclaimedBytes))")
+            Text("已移入隔离区 \(ByteFormat.string(summary.quarantinedBytes))")
                 .font(.system(size: 27, weight: .medium))
                 .monospacedDigit()
                 .foregroundStyle(Theme.label)
 
-            Text("\(summary.removedCount) 项已移入隔离区，\(environment.settings.retentionDays) 天后自动删除。")
+            // Says "N 天后释放", not "已回收". The quarantine store is on the
+            // same volume, so nothing has been given back yet — and a user who
+            // checks their free space right now will find it unchanged.
+            Text("\(summary.removedCount) 项。隔离区在同一块磁盘上，"
+                 + "\(environment.settings.retentionDays) 天后自动删除，届时才会真正释放空间。")
                 .font(.system(size: 13))
                 .foregroundStyle(Theme.secondaryLabel)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: 420)
 
             if !summary.skipped.isEmpty {
                 DisclosureGroup(isExpanded: $showSkipped) {
