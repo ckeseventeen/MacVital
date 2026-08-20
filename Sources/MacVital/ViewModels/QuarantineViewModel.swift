@@ -54,53 +54,11 @@ final class QuarantineViewModel: ObservableObject {
     /// that need it should say so instead of failing on click.
     var helperUnavailableOnThisBuild: Bool { !HelperClient.isSupportedByThisBuild }
 
-    /// Whether this record can be acted on at all right now.
-    ///
-    /// The first version asked `record.usedPrivilegedHelper`, which is a note
-    /// about how the item *arrived* — and both records that were actually stuck
-    /// had it set to `false`. They were moved in as the ordinary user and only
-    /// became unremovable afterwards, because of an ACL on their contents. So
-    /// the flag answered a question nobody was asking while the two rows that
-    /// needed the explanation kept offering buttons that could not work.
-    ///
-    /// The real question is whether the store can still delete it, which only
-    /// the filesystem knows.
-    func blocker(for record: QuarantineRecord) -> Blocker? {
-        if SIPGuard.hasDeleteDenyACL(at: record.storedPath) { return .deleteDenyACL }
-        if record.usedPrivilegedHelper && helperUnavailableOnThisBuild { return .needsHelper }
-        return nil
-    }
-
-    enum Blocker {
-        /// An ACL on the stored copy denies deletion — and therefore also
-        /// denies restoring, which has to move it out first.
-        case deleteDenyACL
-        case needsHelper
-
-        var label: String {
-            switch self {
-            case .deleteDenyACL: return "被 ACL 锁定"
-            case .needsHelper: return "需要管理员权限"
-            }
-        }
-
-        var symbolName: String {
-            switch self {
-            case .deleteDenyACL: return "lock.slash"
-            case .needsHelper: return "key.slash"
-            }
-        }
-
-        var help: String {
-            switch self {
-            case .deleteDenyACL:
-                return "系统在这份内容上设置了「禁止删除」的 ACL，所以它既删不掉也还原不了。"
-                     + "在访达中打开后，可用终端执行 chmod -a# 0 <路径> 移除该 ACL，再回来操作。"
-            case .needsHelper:
-                return "这一项位于系统目录，需要特权助手。当前构建是自签名的，无法使用助手"
-                     + "（需要 Developer ID 签名的构建）。请在访达中手动处理。"
-            }
-        }
+    /// Delegates to `RecordBlocker`, which lives in the kit because that is the
+    /// layer with tests — and getting this decision wrong here is precisely
+    /// what shipped last time.
+    func blocker(for record: QuarantineRecord) -> RecordBlocker? {
+        RecordBlocker.evaluate(record, privilegedRemovalPossible: HelperClient.isSupportedByThisBuild)
     }
 
     func revealOrphans() {

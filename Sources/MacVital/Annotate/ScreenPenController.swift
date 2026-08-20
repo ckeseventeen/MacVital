@@ -129,8 +129,11 @@ final class ScreenPenController: NSObject, ObservableObject {
         }
     }
 
+    /// Strictly `canUndo`. It used to be `canUndo || !isEmpty`, which lit the
+    /// undo button for a canvas holding strokes it could no longer undo —
+    /// pressing it did nothing, with no way to tell that from a missed click.
     private func refreshUndoState() {
-        canUndo = canvases.contains { $0.document.canUndo || !$0.document.isEmpty }
+        canUndo = canvases.contains { $0.document.canUndo }
     }
 
     // MARK: - Monitors

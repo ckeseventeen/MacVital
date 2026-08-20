@@ -145,8 +145,12 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         downRow.title = "下载　\(SpeedFormat.string(speeds.downloadRate))"
         upRow.title = "上传　\(SpeedFormat.string(speeds.uploadRate))"
 
-        if let free = Self.freeDiskBytes() {
-            diskRow.title = "可用空间　\(ByteFormat.string(free))"
+        // `DiskSpace.current()`, not a second implementation. This used to have
+        // its own `freeDiskBytes()` querying the same key — two copies of one
+        // question, free to drift apart on which volume or which capacity key
+        // they ask about.
+        if let snapshot = DiskSpace.current() {
+            diskRow.title = "可用空间　\(ByteFormat.string(snapshot.free))"
         } else {
             diskRow.title = "可用空间　未知"
         }
@@ -155,12 +159,6 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         quarantineRow.title = quarantined > 0
             ? "隔离区　\(ByteFormat.string(quarantined))"
             : "隔离区　空"
-    }
-
-    private static func freeDiskBytes() -> Int64? {
-        let url = URL(fileURLWithPath: NSHomeDirectory())
-        let values = try? url.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
-        return values?.volumeAvailableCapacityForImportantUsage
     }
 
     // MARK: - Actions

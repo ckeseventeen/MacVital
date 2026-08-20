@@ -59,6 +59,64 @@ public struct QuarantineRecord: Identifiable, Codable, Hashable, Sendable {
     public var abbreviatedOriginalPath: String { PathRedaction.abbreviate(originalPath) }
 }
 
+/// Why a record cannot be restored or purged right now.
+///
+/// Lives here rather than in the view model for the same reason the selection
+/// rules do: this layer has tests, and the view models have none. The first
+/// version of this decision shipped in `QuarantineViewModel` asking
+/// `record.usedPrivilegedHelper` — a note about how the item *arrived* — and
+/// both records that were actually stuck had it set to `false`. The rows that
+/// needed an explanation kept offering buttons that could not work.
+public enum RecordBlocker: Equatable, Sendable {
+    /// Something in the stored copy denies removal: an ACL, or a non-empty
+    /// directory with no write permission. Restoring is blocked too — it has
+    /// to move the whole tree back out.
+    case contentsNotRemovable(path: String)
+    /// Root-owned, on a build whose privileged helper can never connect.
+    case privilegedHelperUnavailable
+
+    public var label: String {
+        switch self {
+        case .contentsNotRemovable: return "内容无法移除"
+        case .privilegedHelperUnavailable: return "需要管理员权限"
+        }
+    }
+
+    public var symbolName: String {
+        switch self {
+        case .contentsNotRemovable: return "lock.slash"
+        case .privilegedHelperUnavailable: return "key.slash"
+        }
+    }
+
+    public var help: String {
+        switch self {
+        case .contentsNotRemovable(let path):
+            return "\(PathRedaction.abbreviate(path)) 挡住了整棵目录 —— 要么带着「禁止删除」的 ACL，"
+                 + "要么是个没有写权限的非空目录（应用的自我保护或系统只读资源都会这样）。"
+                 + "因此它既删不掉也还原不了。在访达中打开后，用 chmod u+w 或 chmod -a# 0 处理该路径。"
+        case .privilegedHelperUnavailable:
+            return "这一项位于系统目录，需要特权助手。当前构建是自签名的，无法使用助手"
+                 + "（需要 Developer ID 签名的构建）。请在访达中手动处理。"
+        }
+    }
+
+    /// The real question is whether the store can still act on this record,
+    /// which only the filesystem knows.
+    public static func evaluate(
+        _ record: QuarantineRecord,
+        privilegedRemovalPossible: Bool
+    ) -> RecordBlocker? {
+        if let blocker = SIPGuard.removalBlocker(at: record.storedPath) {
+            return .contentsNotRemovable(path: blocker.path)
+        }
+        if record.usedPrivilegedHelper && !privilegedRemovalPossible {
+            return .privilegedHelperUnavailable
+        }
+        return nil
+    }
+}
+
 public enum QuarantineError: LocalizedError {
     case rootUnavailable(String)
     case sourceMissing(String)

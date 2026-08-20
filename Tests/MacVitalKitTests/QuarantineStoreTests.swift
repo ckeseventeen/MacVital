@@ -3,7 +3,7 @@ import XCTest
 
 final class QuarantineStoreTests: XCTestCase {
 
-    private var sandbox: URL!
+    var sandbox: URL!
     private var store: QuarantineStore!
 
     override func setUpWithError() throws {
@@ -211,5 +211,100 @@ private final class MutableDays: @unchecked Sendable {
     var value: Int {
         get { lock.lock(); defer { lock.unlock() }; return storage }
         set { lock.lock(); storage = newValue; lock.unlock() }
+    }
+}
+
+/// Whether a record can still be acted on.
+///
+/// This decision used to live in `QuarantineViewModel`, where nothing tests it,
+/// and it asked `record.usedPrivilegedHelper` — a note about how the item
+/// arrived. Both records that were actually stuck had it set to `false`: they
+/// were moved in as the ordinary user and only became unremovable afterwards.
+/// So the flag answered a question nobody was asking, while the two rows that
+/// needed an explanation kept offering buttons that could not work.
+extension QuarantineStoreTests {
+
+    private func record(
+        storedPath: String,
+        usedPrivilegedHelper: Bool = false
+    ) -> QuarantineRecord {
+        QuarantineRecord(
+            originalPath: "/tmp/original",
+            storedPath: storedPath,
+            displayName: "测试",
+            category: .caches,
+            sizeBytes: 10,
+            purgeAfter: Date().addingTimeInterval(86_400),
+            ruleID: "cache.userCaches",
+            rationale: "test",
+            usedPrivilegedHelper: usedPrivilegedHelper
+        )
+    }
+
+    func testOrdinaryRecordHasNoBlocker() throws {
+        let stored = sandbox.appendingPathComponent("plain/payload.txt")
+        try FileManager.default.createDirectory(
+            at: stored.deletingLastPathComponent(), withIntermediateDirectories: true
+        )
+        try Data("x".utf8).write(to: stored)
+
+        XCTAssertNil(RecordBlocker.evaluate(record(storedPath: stored.path),
+                                            privilegedRemovalPossible: true))
+    }
+
+    /// The case that actually happened: moved in as the ordinary user, so the
+    /// flag says `false`, but the contents cannot be removed.
+    func testUnremovableContentsAreReportedEvenWhenTheFlagSaysOtherwise() throws {
+        let stored = sandbox.appendingPathComponent("stuck", isDirectory: true)
+        let blocked = stored.appendingPathComponent("000RefuseWalletDBDelete", isDirectory: true)
+        try FileManager.default.createDirectory(at: blocked, withIntermediateDirectories: true)
+        try Data("x".utf8).write(to: blocked.appendingPathComponent("permissionFile"))
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: blocked.path)
+        addTeardownBlock {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: blocked.path)
+        }
+
+        let blocker = RecordBlocker.evaluate(
+            record(storedPath: stored.path, usedPrivilegedHelper: false),
+            privilegedRemovalPossible: true
+        )
+        XCTAssertEqual(blocker, .contentsNotRemovable(path: blocked.path))
+        // The message names the offending path — "无法删除" alone leaves the
+        // user to find it, which is what they had to do.
+        XCTAssertTrue(blocker?.help.contains("000RefuseWalletDBDelete") == true)
+    }
+
+    func testPrivilegedRecordIsBlockedOnlyWhenTheHelperCannotWork() throws {
+        let stored = sandbox.appendingPathComponent("priv/payload.txt")
+        try FileManager.default.createDirectory(
+            at: stored.deletingLastPathComponent(), withIntermediateDirectories: true
+        )
+        try Data("x".utf8).write(to: stored)
+        let privileged = record(storedPath: stored.path, usedPrivilegedHelper: true)
+
+        XCTAssertEqual(
+            RecordBlocker.evaluate(privileged, privilegedRemovalPossible: false),
+            .privilegedHelperUnavailable
+        )
+        XCTAssertNil(RecordBlocker.evaluate(privileged, privilegedRemovalPossible: true))
+    }
+
+    /// Unremovable contents win: no amount of privilege lifts an ACL or a
+    /// read-only parent, so pointing the user at the helper would misdirect.
+    func testContentsBlockerTakesPrecedenceOverPrivilege() throws {
+        let stored = sandbox.appendingPathComponent("both", isDirectory: true)
+        let blocked = stored.appendingPathComponent("inner", isDirectory: true)
+        try FileManager.default.createDirectory(at: blocked, withIntermediateDirectories: true)
+        try Data("x".utf8).write(to: blocked.appendingPathComponent("f"))
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: blocked.path)
+        addTeardownBlock {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: blocked.path)
+        }
+
+        let blocker = RecordBlocker.evaluate(
+            record(storedPath: stored.path, usedPrivilegedHelper: true),
+            privilegedRemovalPossible: false
+        )
+        XCTAssertEqual(blocker, .contentsNotRemovable(path: blocked.path))
     }
 }
