@@ -52,6 +52,8 @@ final class DeleteDenyACLTests: XCTestCase {
         run(["-N", url.path])
     }
 
+    func makeDirectoryPublic(_ name: String) throws -> URL { try makeDirectory(name) }
+
     private func makeDirectory(_ name: String) throws -> URL {
         let url = sandbox.appendingPathComponent(name, isDirectory: true)
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
@@ -129,7 +131,76 @@ final class DeleteDenyACLTests: XCTestCase {
         // match it — assert on the *reason* instead, which is what changed.
         let decision = engine.evaluate(item)
         XCTAssertTrue(decision.isDenied)
-        XCTAssertEqual(decision.denyReason, .immutableFlag,
+        XCTAssertEqual(decision.denyReason, .contentsNotRemovable,
                        "an ACL that denies delete must be refused before anything is moved")
+    }
+}
+
+/// The other half of "this tree cannot actually be removed": a directory deep
+/// inside with no write permission.
+///
+/// Two real cases, both of which passed every check and then stranded
+/// themselves in quarantine:
+///   * a wallet app ships `Data/Documents/000RefuseWalletDBDelete/` at mode
+///     r-x, on purpose, so its database survives cleaners;
+///   * Apple's `~/Library/Trial/…/assets/compiledModel/` is read-only for
+///     ordinary reasons.
+/// The top of each tree looked completely normal.
+extension DeleteDenyACLTests {
+
+    private func makeNestedUnwritable() throws -> (root: URL, blocked: URL) {
+        let root = try makeDirectoryPublic("tree")
+        let deep = root.appendingPathComponent("Data/Documents/000RefuseWalletDBDelete", isDirectory: true)
+        try FileManager.default.createDirectory(at: deep, withIntermediateDirectories: true)
+        try Data("x".utf8).write(to: deep.appendingPathComponent("permissionFile"))
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: deep.path)
+        return (root, deep)
+    }
+
+    func testUnwritableDirectoryDeepInsideIsFound() throws {
+        let (root, blocked) = try makeNestedUnwritable()
+        addTeardownBlock {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: blocked.path)
+        }
+
+        let found = SIPGuard.removalBlocker(at: root.path)
+        XCTAssertEqual(found, .unwritableDirectory(path: blocked.path))
+    }
+
+    /// The detector has to agree with reality, or the guard is either useless
+    /// or a false alarm.
+    func testUnwritableDirectoryActuallyBlocksRemoval() throws {
+        let (root, blocked) = try makeNestedUnwritable()
+
+        XCTAssertNotNil(SIPGuard.removalBlocker(at: root.path))
+        XCTAssertThrowsError(try FileManager.default.removeItem(at: root))
+
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: blocked.path)
+        XCTAssertNil(SIPGuard.removalBlocker(at: root.path))
+        XCTAssertNoThrow(try FileManager.default.removeItem(at: root))
+    }
+
+    /// An empty unwritable directory is removable — it has nothing to give up —
+    /// so flagging it would lock rows for no reason.
+    func testEmptyUnwritableDirectoryIsNotFlagged() throws {
+        let root = try makeDirectoryPublic("emptytree")
+        let deep = root.appendingPathComponent("inner", isDirectory: true)
+        try FileManager.default.createDirectory(at: deep, withIntermediateDirectories: true)
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: deep.path)
+        addTeardownBlock {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: deep.path)
+        }
+
+        XCTAssertNil(SIPGuard.removalBlocker(at: root.path))
+    }
+
+    func testOrdinaryTreeHasNoBlocker() throws {
+        let root = try makeDirectoryPublic("plaintree")
+        try FileManager.default.createDirectory(
+            at: root.appendingPathComponent("a/b"), withIntermediateDirectories: true
+        )
+        try Data("x".utf8).write(to: root.appendingPathComponent("a/b/file.txt"))
+
+        XCTAssertNil(SIPGuard.removalBlocker(at: root.path))
     }
 }

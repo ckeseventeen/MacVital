@@ -95,19 +95,25 @@ public struct RuleEngine: Sendable {
             }
         }
 
-        // 5b. An ACL that denies deletion.
+        // 5b. Can the whole tree actually be removed?
         //
-        //     macOS puts `group:everyone deny delete` on several ~/Library
-        //     directories. None of the checks above sees it: the flags are
-        //     clear, the owner is the user, and `access(W_OK)` does not
-        //     evaluate ACL delete permission. So they passed, were moved into
-        //     quarantine, and then could be neither purged nor restored —
-        //     restoring has to move them back out. Two of them wedged a real
-        //     store until the ACL was stripped by hand.
-        if SIPGuard.hasDeleteDenyACL(at: resolved) {
-            return .deny(rule.id, .immutableFlag,
-                         "系统在这个目录上设置了「禁止删除」的访问控制列表（ACL），"
-                         + "移动它会让它既删不掉也还原不了。如确需处理，请先用 chmod -a# 手动移除该 ACL。")
+        //     Everything above looks at the target itself. These do not:
+        //
+        //       * macOS puts `group:everyone deny delete` on several ~/Library
+        //         directories, and `access(W_OK)` does not evaluate an ACL's
+        //         delete permission at all;
+        //       * a wallet app ships `Data/Documents/000RefuseWalletDBDelete/`
+        //         at mode r-x specifically so its database cannot be removed,
+        //         and Apple's ~/Library/Trial ships read-only model assets for
+        //         ordinary reasons.
+        //
+        //     All three passed every check, were moved into quarantine, and
+        //     then could be neither purged nor restored — restoring has to move
+        //     the tree back out. The user had to find the offending directory
+        //     by hand. Refusing up front is the only version of this that does
+        //     not strand data.
+        if let blocker = SIPGuard.removalBlocker(at: resolved) {
+            return .deny(rule.id, .contentsNotRemovable, Self.explain(blocker))
         }
 
         // 6. Never touch ourselves — the quarantine store above all.
@@ -174,6 +180,22 @@ public struct RuleEngine: Sendable {
             }
         }
         return (allowed, denied)
+    }
+
+    /// Names the exact path that blocks removal. "无法删除" without saying which
+    /// piece is useless — the user's only recourse is to find it themselves,
+    /// which is what happened before this check existed.
+    private static func explain(_ blocker: SIPGuard.RemovalBlocker) -> String {
+        let path = PathRedaction.abbreviate(blocker.path)
+        switch blocker {
+        case .deleteDenyACL:
+            return "\(path) 上有「禁止删除」的访问控制列表（ACL），整棵目录会因此既删不掉也还原不了。"
+                 + "如确需处理，请先执行 chmod -a# 0 移除该 ACL。"
+        case .unwritableDirectory:
+            return "\(path) 没有写权限，里面的内容无法移除，整棵目录会卡在半路。"
+                 + "这通常是应用有意的自我保护（例如名为 000RefuseWalletDBDelete 的目录），"
+                 + "也可能是系统自带的只读资源。如确需处理，请先执行 chmod u+w。"
+        }
     }
 
     private static func explain(_ reason: DenyReason, path: String) -> String {

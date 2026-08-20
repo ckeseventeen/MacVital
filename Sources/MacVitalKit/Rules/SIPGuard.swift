@@ -63,6 +63,82 @@ public enum SIPGuard {
         return access(parent, W_OK) == 0 && access(path, W_OK) == 0
     }
 
+    /// Why a tree cannot be removed in full, if it cannot.
+    public enum RemovalBlocker: Sendable, Equatable {
+        /// An ACL denies deletion of this path.
+        case deleteDenyACL(path: String)
+        /// This directory has contents but is not writable, so nothing inside
+        /// it can be unlinked.
+        case unwritableDirectory(path: String)
+
+        public var path: String {
+            switch self {
+            case .deleteDenyACL(let path), .unwritableDirectory(let path): return path
+            }
+        }
+    }
+
+    /// Walks a tree and reports the first thing that would make a full removal
+    /// fail partway through.
+    ///
+    /// `currentUserCanRemove` only looks at the entry and its immediate parent.
+    /// Both real failures were deeper than that and the top looked fine:
+    ///
+    ///   * a wallet app ships `Data/Documents/000RefuseWalletDBDelete/` at mode
+    ///     `r-x` — the name says outright what it is for. Nothing inside it can
+    ///     be unlinked, so the container is undeletable by design.
+    ///   * Apple's `~/Library/Trial/Treatments/…/assets/compiledModel/` is
+    ///     read-only for the same mechanical reason.
+    ///
+    /// Both passed every check, were moved into quarantine, and then could be
+    /// neither purged nor restored — restoring has to move the whole tree back.
+    /// The user had to find the offending directory by hand and `chmod u+w` it.
+    ///
+    /// One walk covers both this and the ACL question so a candidate is not
+    /// traversed twice. Bounded: a partial answer that catches the common
+    /// shapes beats doubling the cost of every scan.
+    public static func removalBlocker(at path: String, maxEntries: Int = 2048) -> RemovalBlocker? {
+        if entryDeniesDelete(path) { return .deleteDenyACL(path: path) }
+
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory),
+              isDirectory.boolValue
+        else { return nil }
+
+        if let blocker = directoryBlocker(at: path) { return blocker }
+
+        guard let enumerator = FileManager.default.enumerator(atPath: path) else { return nil }
+        var visited = 0
+        for case let relative as String in enumerator {
+            visited += 1
+            if visited > maxEntries { break }
+
+            let child = (path as NSString).appendingPathComponent(relative)
+            // Symlinks are unlinked, never followed — the target's permissions
+            // are irrelevant and following one would leave this directory.
+            if isSymlink(child) {
+                enumerator.skipDescendants()
+                continue
+            }
+            if entryDeniesDelete(child) { return .deleteDenyACL(path: child) }
+            if let blocker = directoryBlocker(at: child) { return blocker }
+        }
+        return nil
+    }
+
+    /// A non-empty directory that cannot be written to cannot give up its
+    /// contents, whatever the permissions on the contents themselves are.
+    private static func directoryBlocker(at path: String) -> RemovalBlocker? {
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory),
+              isDirectory.boolValue
+        else { return nil }
+        guard access(path, W_OK) != 0 else { return nil }
+
+        let contents = (try? FileManager.default.contentsOfDirectory(atPath: path)) ?? []
+        return contents.isEmpty ? nil : .unwritableDirectory(path: path)
+    }
+
     /// True when an ACL on the entry, or anywhere beneath it, denies deletion.
     ///
     /// macOS puts `group:everyone deny delete` on several directories under

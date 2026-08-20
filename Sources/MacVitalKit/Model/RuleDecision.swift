@@ -31,6 +31,10 @@ public enum DenyReason: String, Codable, Sendable {
     /// say "this build cannot" rather than "this file is protected", which
     /// would be false.
     case privilegedHelperUnavailable
+    /// Something inside the tree cannot be removed — an ACL that denies delete,
+    /// or a non-empty directory with no write permission. Moving such a tree
+    /// into quarantine strands it there: it can be neither purged nor restored.
+    case contentsNotRemovable
 }
 
 public struct RuleDecision: Hashable, Codable, Sendable {
