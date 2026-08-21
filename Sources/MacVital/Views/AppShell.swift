@@ -213,7 +213,7 @@ private struct NavRow: View {
                         .foregroundStyle(isActive ? .white.opacity(0.85) : Theme.secondaryLabel)
                 }
             }
-            .foregroundStyle(isActive ? Color.white : Theme.secondaryLabel)
+            .foregroundStyle(isActive ? Theme.accent : Theme.secondaryLabel)
             .padding(.horizontal, 11)
             .padding(.vertical, 9)
             .background(
@@ -231,8 +231,12 @@ private struct RoundedMarker: View {
     let isHovering: Bool
 
     var body: some View {
+        // A tinted fill, not a solid one. Everything else in this window sits
+        // at low contrast on purpose; a saturated block was the one thing
+        // shouting, and it is not even the thing the user is looking at. This
+        // is also what every macOS sidebar does.
         RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous)
-            .fill(isActive ? Theme.accent : (isHovering ? Theme.accent.opacity(0.10) : Color.clear))
+            .fill(isActive ? Theme.accent.opacity(0.16) : (isHovering ? Theme.accent.opacity(0.08) : Color.clear))
     }
 }
 

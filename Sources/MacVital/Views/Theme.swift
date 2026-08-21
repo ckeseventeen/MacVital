@@ -23,9 +23,17 @@ enum Theme {
     /// Window background and sidebar.
     static let canvas = adaptive(light: 0xF5F5F7, dark: 0x1C1C1E)
     /// Cards and the content pane.
-    static let surface = adaptive(light: 0xFFFFFF, dark: 0x252528)
+    ///
+    /// The dark value is a wider step from `canvas` than the spec's light pair
+    /// implies, and deliberately so. White on `#F5F5F7` separates on its own;
+    /// `#252528` on `#1C1C1E` is nine levels per channel, and with the spec's
+    /// "no heavy shadows anywhere" rule there was nothing else doing the work —
+    /// cards read as patches of slightly different background rather than as
+    /// objects sitting on it. Dark surfaces need a larger luminance step than
+    /// their light counterparts to carry the same separation.
+    static let surface = adaptive(light: 0xFFFFFF, dark: 0x2C2C30)
     /// Inset wells inside a card (stat tiles, search fields).
-    static let well = adaptive(light: 0xF5F5F7, dark: 0x2E2E32)
+    static let well = adaptive(light: 0xF5F5F7, dark: 0x37373C)
 
     // MARK: - Text
 
@@ -39,7 +47,7 @@ enum Theme {
     static var separator: Color {
         Color.adaptive(
             light: Color.black.opacity(0.08),
-            dark: Color.white.opacity(0.10)
+            dark: Color.white.opacity(0.13)
         )
     }
     static var strongSeparator: Color {

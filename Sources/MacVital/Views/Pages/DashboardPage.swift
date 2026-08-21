@@ -11,6 +11,7 @@ struct DashboardPage: View {
                 greeting
                 overview
                 quickActions
+                systemStatus
             }
             .padding(.horizontal, Theme.Metric.pagePaddingH)
             .padding(.vertical, Theme.Metric.pagePaddingV)
@@ -82,7 +83,7 @@ struct DashboardPage: View {
                 }
             }
         }
-        .frame(width: 140, height: 140)
+        .frame(width: 122, height: 122)
     }
 
     private var statGrid: some View {
@@ -96,32 +97,43 @@ struct DashboardPage: View {
         }
     }
 
+    /// The dot encodes *state*, not category.
+    ///
+    /// It used to be one colour per tile — orange, blue, orange, green — which
+    /// looked like a legend and was not one: the same orange meant "space you
+    /// could reclaim" on one tile and "files awaiting deletion" on the next.
+    /// Four decorative colours are four things for the eye to resolve before
+    /// discovering none of them mean anything. Now: coloured means there is
+    /// something to act on, grey means there is not.
     private var stats: [(label: String, value: String, dot: Color, tint: Color)] {
         let scanned = model.totalFoundBytes
+        let quarantined = environment.quarantineBytes
+        let almostFull = (environment.diskSpace?.usedFraction ?? 0) > 0.9
+
         return [
             (
                 "可回收",
                 scanned > 0 ? ByteFormat.string(scanned) : "未扫描",
-                Theme.junk,
+                scanned > 0 ? Theme.junk : Theme.tertiaryLabel,
                 scanned > 0 ? Theme.junk : Theme.secondaryLabel
             ),
             (
                 "缓存",
                 model.findings.isEmpty ? "—" : ByteFormat.string(model.bytes(in: .caches)),
-                ScanCategory.caches.tint,
-                Theme.label
+                model.bytes(in: .caches) > 0 ? Theme.accent : Theme.tertiaryLabel,
+                model.findings.isEmpty ? Theme.secondaryLabel : Theme.label
             ),
             (
                 "隔离区",
-                environment.quarantineBytes > 0 ? ByteFormat.string(environment.quarantineBytes) : "空",
-                ScanCategory.appResidue.tint,
-                Theme.label
+                quarantined > 0 ? ByteFormat.string(quarantined) : "空",
+                quarantined > 0 ? Theme.accent : Theme.tertiaryLabel,
+                quarantined > 0 ? Theme.label : Theme.secondaryLabel
             ),
             (
                 "可用空间",
                 environment.diskSpace.map { ByteFormat.string($0.free) } ?? "—",
-                Theme.success,
-                Theme.success
+                almostFull ? Theme.junk : Theme.success,
+                almostFull ? Theme.junk : Theme.success
             ),
         ]
     }
@@ -134,9 +146,13 @@ struct DashboardPage: View {
                 .font(.system(size: 14, weight: .medium))
                 .foregroundStyle(Theme.label)
 
+            // Three columns, not two. There are five actions, and two columns
+            // left the last one alone on its own row with a hole beside it.
             LazyVGrid(
-                columns: [GridItem(.flexible(), spacing: Theme.Metric.gridSpacing),
-                          GridItem(.flexible(), spacing: Theme.Metric.gridSpacing)],
+                columns: Array(
+                    repeating: GridItem(.flexible(), spacing: Theme.Metric.gridSpacing),
+                    count: 3
+                ),
                 spacing: Theme.Metric.gridSpacing
             ) {
                 QuickAction(
@@ -189,6 +205,130 @@ struct DashboardPage: View {
                 }
             }
         }
+    }
+}
+
+// MARK: - System status
+
+extension DashboardPage {
+
+    /// What the app can and cannot do on this machine right now.
+    ///
+    /// Not filler. Full Disk Access decides whether a scan sees most of
+    /// `~/Library` at all — the README spends a section on it — and the
+    /// privileged helper decides whether anything under `/Library` can be
+    /// touched. Both were discoverable only by running into them: a scan came
+    /// back thin, or a row was locked, and nothing on the overview said why.
+    ///
+    /// It also gives the page a bottom. The dashboard ended two-thirds of the
+    /// way down a tall window, which read as unfinished.
+    fileprivate var systemStatus: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("系统状态")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(Theme.label)
+
+            LazyVGrid(
+                columns: Array(
+                    repeating: GridItem(.flexible(), spacing: Theme.Metric.gridSpacing),
+                    count: 3
+                ),
+                spacing: Theme.Metric.gridSpacing
+            ) {
+                StatusTile(
+                    title: "完整磁盘访问",
+                    detail: fullDiskDetail,
+                    systemImage: "externaldrive.badge.person.crop",
+                    state: fullDiskState
+                )
+                StatusTile(
+                    title: "特权助手",
+                    detail: environment.helperStatus.summary,
+                    systemImage: "key",
+                    state: environment.helperStatus == .enabled ? .good
+                        : (environment.helperStatus == .unsupported ? .unavailable : .attention)
+                )
+                StatusTile(
+                    title: "隔离区保留",
+                    detail: "\(environment.settings.retentionDays) 天后自动清除",
+                    systemImage: "clock.arrow.circlepath",
+                    state: .good
+                )
+            }
+        }
+    }
+
+    private var fullDiskState: StatusTile.State {
+        switch environment.permissions.fullDiskAccess {
+        case .granted: return .good
+        case .denied: return .attention
+        case .unknown: return .unavailable
+        }
+    }
+
+    private var fullDiskDetail: String {
+        switch environment.permissions.fullDiskAccess {
+        case .granted: return "已授权，扫描可以看到完整的 ~/Library"
+        case .denied: return "未授权，扫描结果会严重偏少"
+        case .unknown: return "无法确定，可在设置中重新检测"
+        }
+    }
+}
+
+/// One line of "can the app do this here", with the reason attached.
+private struct StatusTile: View {
+    enum State {
+        case good
+        case attention
+        /// Not a problem to fix — a property of this build or machine.
+        case unavailable
+
+        var tint: Color {
+            switch self {
+            case .good: return Theme.success
+            case .attention: return Theme.junk
+            case .unavailable: return Theme.secondaryLabel
+            }
+        }
+
+        var symbol: String {
+            switch self {
+            case .good: return "checkmark.circle.fill"
+            case .attention: return "exclamationmark.triangle.fill"
+            case .unavailable: return "minus.circle.fill"
+            }
+        }
+    }
+
+    let title: String
+    let detail: String
+    let systemImage: String
+    let state: State
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 7) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 13))
+                    .foregroundStyle(Theme.secondaryLabel)
+                Text(title)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(Theme.label)
+                Spacer(minLength: 0)
+                Image(systemName: state.symbol)
+                    .font(.system(size: 12))
+                    .foregroundStyle(state.tint)
+            }
+            Text(detail)
+                .font(.system(size: 12))
+                .foregroundStyle(Theme.secondaryLabel)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .well(cornerRadius: Theme.Radius.card)
     }
 }
 

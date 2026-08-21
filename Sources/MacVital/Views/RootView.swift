@@ -10,6 +10,12 @@ struct RootView: View {
 
     var body: some View {
         AppShell()
+            // The titlebar said "MacVital" on every page, which the Dock icon,
+            // the menu bar and the sidebar header already say. Naming the page
+            // instead makes the one line macOS gives us for free carry
+            // something — and it is what a document-less Mac app conventionally
+            // puts there.
+            .navigationTitle(environment.page.title)
             // Hand the AppKit side what it cannot reach on its own: the
             // environment (for the lifecycle callbacks) and the scene's
             // `openWindow` (the only way to rebuild a closed `Window`).
@@ -62,6 +68,17 @@ struct PermissionBanner: View {
     private var permissions: PermissionsCoordinator { environment.permissions }
     private var isDenied: Bool { permissions.fullDiskAccess == .denied }
 
+    /// The explanation is collapsed until asked for.
+    ///
+    /// Both notes below are things the user genuinely needs at the moment they
+    /// hit them — that a relaunch is required, and that an ad-hoc build's grant
+    /// dies on every rebuild — so neither can be cut. But left open they are
+    /// roughly a hundred and fifty words of documentation nailed permanently
+    /// across the top of every page, and they pushed the actual content of the
+    /// overview a fifth of the way down the window. A headline, the buttons,
+    /// and a way to ask why.
+    @State private var showingDetail = false
+
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 11) {
@@ -90,9 +107,21 @@ struct PermissionBanner: View {
                 Button("授权后重启") { permissions.relaunch() }
                     .controlSize(.small)
                     .buttonStyle(.borderedProminent)
+
+                if isDenied {
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.18)) { showingDetail.toggle() }
+                    } label: {
+                        Image(systemName: showingDetail ? "chevron.up" : "chevron.down")
+                            .font(.system(size: 11, weight: .semibold))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Theme.secondaryLabel)
+                    .help(showingDetail ? "收起说明" : "授权了还是不行？")
+                }
             }
 
-            if isDenied {
+            if isDenied, showingDetail {
                 BannerNote(
                     "授权后必须重启 App 才会生效 —— macOS 只在进程启动时授予这个权限，"
                     + "所以在当前进程里点「重新检测」不会变化，这不是检测失败。"
