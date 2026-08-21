@@ -55,7 +55,14 @@ public struct DuplicateFileScanner: Scanner {
             // Distinct paths only. Two entries for one path — overlapping scan
             // roots, or the same file reached twice — would otherwise make a
             // file a duplicate of itself and offer the only copy for removal.
-            let unique = Array(Set(urls.map(\.path))).map(URL.init(fileURLWithPath:))
+            //
+            // Then distinct *files*, which is not the same question. Two hard
+            // links are two paths to one inode: byte-identical by construction,
+            // so they always group here, and removing one frees nothing at all
+            // while the summary counts its full size. That is the same class of
+            // untruth as the old `reclaimedBytes` — the user checks their free
+            // space and the number did not move.
+            let unique = Self.distinctFiles(Array(Set(urls.map(\.path))).map(URL.init(fileURLWithPath:)))
             guard unique.count > 1 else { continue }
 
             // Oldest wins, by creation date, exactly as documented. This read
@@ -188,6 +195,42 @@ public struct DuplicateFileScanner: Scanner {
                 batch.append(Candidate(url: url, size: size))
             }
             return batch
+        }
+    }
+
+    /// Collapses paths that are names for the same inode, keeping one each.
+    ///
+    /// Deliberately not a claim about APFS clones. A clone is a separate inode
+    /// whose blocks are shared until one side is written, and macOS exposes no
+    /// public way to ask how much of that sharing survives — so a cloned copy
+    /// is reported, and removing it does return less than its stated size. The
+    /// framing above it is at least honest about that: the summary says how
+    /// much moved to quarantine, not how much the volume got back.
+    static func distinctFiles(_ urls: [URL]) -> [URL] {
+        var seen = Set<FileIdentity>()
+        var result: [URL] = []
+        for url in urls {
+            guard let identity = FileIdentity(path: url.path) else {
+                // Unreadable: keep it rather than silently dropping a candidate.
+                result.append(url)
+                continue
+            }
+            if seen.insert(identity).inserted { result.append(url) }
+        }
+        return result
+    }
+
+    /// Device plus inode — what actually identifies a file on disk, as opposed
+    /// to a name that points at one.
+    struct FileIdentity: Hashable {
+        let device: dev_t
+        let inode: ino_t
+
+        init?(path: String) {
+            var info = stat()
+            guard lstat(path, &info) == 0 else { return nil }
+            self.device = info.st_dev
+            self.inode = info.st_ino
         }
     }
 
