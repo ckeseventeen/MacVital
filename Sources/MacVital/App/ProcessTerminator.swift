@@ -32,12 +32,14 @@ enum ProcessTerminator {
         /// A GUI application, addressable through its bundle identifier. All
         /// running instances are closed together.
         case application(bundleIdentifier: String, name: String)
-        /// A bare process — a daemon, a helper, a compiler. Addressed by PID.
-        case process(pid: pid_t, name: String)
+        /// A bare process — a daemon, a helper, a compiler. Addressed by PID,
+        /// and carrying what that PID was running when it was recorded so the
+        /// number can be re-confirmed before anything is sent to it.
+        case process(pid: pid_t, executablePath: String, name: String)
 
         var name: String {
             switch self {
-            case .application(_, let name), .process(_, let name): return name
+            case .application(_, let name), .process(_, _, let name): return name
             }
         }
 
@@ -52,13 +54,10 @@ enum ProcessTerminator {
             switch self {
             case .application(let identifier, _):
                 return !ProcessTerminator.instances(of: identifier).isEmpty
-            case .process(let pid, _):
-                // Signal 0 tests for existence and permission without sending
-                // anything.
-                if kill(pid, 0) == 0 { return true }
-                // `EPERM` means it is alive but belongs to someone else;
-                // `ESRCH` means it is gone.
-                return errno == EPERM
+            case .process(let pid, let executablePath, _):
+                // Existence is not enough: a recycled PID exists too. The
+                // question is whether *this* process is still running.
+                return ProcessTerminator.isStillTheRecordedProcess(pid, executablePath)
             }
         }
     }
@@ -85,10 +84,36 @@ enum ProcessTerminator {
         if let identifier = blocker.bundleIdentifier, !instances(of: identifier).isEmpty {
             return .application(bundleIdentifier: identifier, name: blocker.name)
         }
-        if let pid = blocker.pid, pid > 1, pid != getpid() {
-            return .process(pid: pid, name: blocker.name)
+        // A PID with no recorded executable cannot be confirmed later, and an
+        // unconfirmable PID is not something to send SIGKILL to. Offering
+        // nothing is the right answer — the row keeps its explanation.
+        if let pid = blocker.pid, let executable = blocker.executablePath,
+           pid > 1, pid != getpid() {
+            return .process(pid: pid, executablePath: executable, name: blocker.name)
         }
         return nil
+    }
+
+    /// The launchd job that would bring this target straight back, if any.
+    ///
+    /// Worth asking *before* offering to kill anything: a `KeepAlive` job is
+    /// owned by launchd, so the process reappears with a new PID about a second
+    /// later. The button works and the outcome is unchanged, which is the most
+    /// confusing failure an interface can produce.
+    static func relaunchingJob(for target: Target) -> LaunchItemAttribution.RelaunchingJob? {
+        switch target {
+        case .process(_, let executablePath, _):
+            return LaunchItemAttribution.relaunchingJob(forProgram: executablePath)
+        case .application(let identifier, _):
+            // An app is not usually launchd-managed, but a background agent
+            // with a bundle identifier is — and that is exactly the shape the
+            // uninstaller runs into.
+            guard let executable = instances(of: identifier)
+                .compactMap({ $0.executableURL?.path })
+                .first
+            else { return nil }
+            return LaunchItemAttribution.relaunchingJob(forProgram: executable)
+        }
     }
 
     // MARK: - Closing
@@ -103,8 +128,9 @@ enum ProcessTerminator {
             for application in running { application.terminate() }
             return await settle(target)
 
-        case .process(let pid, _):
+        case .process(let pid, let executablePath, _):
             guard isSignallable(pid) else { return .notPermitted }
+            guard isStillTheRecordedProcess(pid, executablePath) else { return .closed }
             guard kill(pid, SIGTERM) == 0 else {
                 return errno == EPERM ? .notPermitted : .closed
             }
@@ -122,8 +148,12 @@ enum ProcessTerminator {
             for application in running { application.forceTerminate() }
             return await settle(target)
 
-        case .process(let pid, _):
+        case .process(let pid, let executablePath, _):
             guard isSignallable(pid) else { return .notPermitted }
+            // Re-checked immediately before SIGKILL, not just before SIGTERM:
+            // the graceful attempt and its three-second wait sit between the
+            // two, which is plenty of time for the PID to be freed and reused.
+            guard isStillTheRecordedProcess(pid, executablePath) else { return .closed }
             guard kill(pid, SIGKILL) == 0 else {
                 return errno == EPERM ? .notPermitted : .closed
             }
@@ -142,6 +172,22 @@ enum ProcessTerminator {
     /// is reported as `.notPermitted` rather than pretended away.
     private static func isSignallable(_ pid: pid_t) -> Bool {
         pid > 1 && pid != getpid()
+    }
+
+    /// Whether `pid` is still running the executable it was recorded with.
+    ///
+    /// The verdict that produced this target was made during a scan; the user
+    /// may act on it minutes later. macOS hands PIDs out again after they are
+    /// freed, so by then the number can belong to something else — and the
+    /// difference between "the compiler you wanted to stop" and "whatever
+    /// happened to start next" is invisible from the PID alone.
+    ///
+    /// A mismatch is reported to the caller as `.closed`, because it is: the
+    /// process that was holding the file is gone. What must not happen is
+    /// signalling its replacement.
+    private static func isStillTheRecordedProcess(_ pid: pid_t, _ executablePath: String) -> Bool {
+        guard let current = RunningProcessIndex.currentExecutablePath(for: pid) else { return false }
+        return current == ProtectedPaths.normalize(executablePath)
     }
 
     private static func instances(of bundleIdentifier: String) -> [NSRunningApplication] {

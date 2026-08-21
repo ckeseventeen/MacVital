@@ -175,12 +175,10 @@ public struct LoginItemScanner: Sendable {
         LaunchItemAttribution.enclosingAppBundle(of: executable)
     }
 
-    /// `KeepAlive` is either a Bool or a dictionary of conditions; a dictionary
-    /// means "keep alive under these circumstances", which is still keep-alive.
+    /// Shared with `LaunchItemAttribution`, which needs the same answer to know
+    /// whether killing a process would simply bring it back.
     private static func readKeepAlive(_ value: Any?) -> Bool {
-        if let flag = value as? Bool { return flag }
-        if value is [String: Any] { return true }
-        return false
+        LaunchItemAttribution.keepsAlive(value)
     }
 
     private static func ownerName(for match: InstalledAppIndex.Match) -> String? {

@@ -122,6 +122,16 @@ public struct RunningProcessIndex: Sendable {
         return Array(pids.prefix(count)).filter { $0 > 0 }
     }
 
+    /// The executable a live PID is running, normalised the same way entries
+    /// are. `nil` when the process is gone or belongs to someone else.
+    ///
+    /// Public because the terminator needs it to confirm a recorded PID still
+    /// means what it meant at scan time, and reimplementing `proc_pidpath` on
+    /// the other side of the module boundary would be two copies of one answer.
+    public static func currentExecutablePath(for pid: pid_t) -> String? {
+        executablePath(for: pid).map(ProtectedPaths.normalize)
+    }
+
     private static func executablePath(for pid: pid_t) -> String? {
         // PROC_PIDPATHINFO_MAXSIZE == 4 * MAXPATHLEN.
         let capacity = 4 * 1024

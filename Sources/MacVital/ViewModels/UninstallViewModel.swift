@@ -96,6 +96,16 @@ final class UninstallViewModel: ObservableObject {
         return targets
     }
 
+    /// Blocking targets whose lifetime launchd owns, named for the
+    /// confirmation. Killing one of these accomplishes nothing that lasts —
+    /// two of the daemons on the machine this was tested against carry
+    /// `KeepAlive`, and both belong to apps this page offers to remove.
+    var relaunchingBlockers: [String] {
+        blockingTargets.compactMap { target in
+            ProcessTerminator.relaunchingJob(for: target).map { "\(target.name)（\($0.label)）" }
+        }
+    }
+
     /// True when a graceful quit has been tried and something is still up, so
     /// the UI may offer the harsher option. Never true before that.
     @Published private(set) var quitWasRefused = false

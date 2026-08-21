@@ -220,6 +220,12 @@ private struct OccupierActions: View {
     @State private var notPermitted = false
     @State private var confirmingForce = false
 
+    /// Non-nil when launchd owns this process's lifetime, in which case
+    /// killing it changes nothing for more than a second.
+    private var relaunchingJob: LaunchItemAttribution.RelaunchingJob? {
+        ProcessTerminator.relaunchingJob(for: target)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
@@ -246,6 +252,17 @@ private struct OccupierActions: View {
                 }
             }
 
+            if let job = relaunchingJob {
+                // Stated up front rather than after the user has tried and
+                // watched nothing happen.
+                Text("「\(target.name)」由启动项 \(job.label) 托管（KeepAlive），"
+                     + "结束后 launchd 会在一秒内重新启动它。要真正让它停下，"
+                     + "先到「开机启动项」里停用该项，再回来结束进程。")
+                    .font(.caption)
+                    .foregroundStyle(Theme.junk)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
             if notPermitted {
                 Text("这个进程属于系统或其他用户，MacVital 不以 root 运行，无法结束它。")
                     .font(.caption)
@@ -265,7 +282,8 @@ private struct OccupierActions: View {
             Button("取消", role: .cancel) {}
         } message: {
             Text("强制结束不给程序保存的机会，未保存的内容会直接丢失，正在写入的文件也可能损坏。"
-                 + "只有在它已经没有响应、或你确定没有未保存内容时才这么做。")
+                 + "只有在它已经没有响应、或你确定没有未保存内容时才这么做。"
+                 + (relaunchingJob.map { "\n\n注意：它由启动项 \($0.label) 托管，结束后会被 launchd 立刻拉起。" } ?? ""))
         }
     }
 

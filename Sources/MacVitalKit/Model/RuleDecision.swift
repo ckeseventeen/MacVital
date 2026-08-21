@@ -55,12 +55,29 @@ public struct BlockingProcess: Hashable, Codable, Sendable {
     /// specific process — the app may have several.
     public var pid: Int32?
     public var bundleIdentifier: String?
+    /// What the PID was running when this verdict was made.
+    ///
+    /// A PID is not a stable handle. This verdict is produced during a scan and
+    /// may be acted on minutes later, and macOS recycles PIDs — by the time the
+    /// user presses 强制结束, that number can belong to something else
+    /// entirely. Signalling it then would kill an unrelated process, which is
+    /// the one outcome a delete-safety tool must never produce.
+    ///
+    /// Recorded so the terminator can confirm the PID still means what it meant
+    /// here before sending anything.
+    public var executablePath: String?
     /// Best available label, for the button and the confirmation.
     public var name: String
 
-    public init(pid: Int32? = nil, bundleIdentifier: String? = nil, name: String) {
+    public init(
+        pid: Int32? = nil,
+        bundleIdentifier: String? = nil,
+        executablePath: String? = nil,
+        name: String
+    ) {
         self.pid = pid
         self.bundleIdentifier = bundleIdentifier
+        self.executablePath = executablePath
         self.name = name
     }
 }

@@ -69,6 +69,14 @@ final class BlockingProcessTests: XCTestCase {
         let blocker = try XCTUnwrap(decision.blockedBy, "an .inUse deny must name what is holding it")
         XCTAssertEqual(blocker.pid, 4242)
         XCTAssertEqual(blocker.name, "compiler")
+        // The PID alone is not a handle. macOS recycles PIDs, and this verdict
+        // may be acted on minutes later, so the terminator re-confirms the
+        // number still means this before signalling it. Without the path there
+        // is nothing to confirm against and it refuses to offer the button.
+        XCTAssertEqual(
+            blocker.executablePath.map(ProtectedPaths.normalize),
+            ProtectedPaths.normalize(executable.path)
+        )
     }
 
     /// A running app's container. Here the bundle identifier is the better

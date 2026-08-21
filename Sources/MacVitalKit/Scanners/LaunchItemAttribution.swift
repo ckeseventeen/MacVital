@@ -19,15 +19,19 @@ public enum LaunchItemAttribution {
 
     /// The executable a launchd plist points at.
     public static func program(atPlist path: String) -> String? {
+        guard let plist = dictionary(atPlist: path) else { return nil }
+        if let program = plist["Program"] as? String { return program }
+        // `ProgramArguments` is argv, so argv[0] is the executable.
+        return (plist["ProgramArguments"] as? [String])?.first
+    }
+
+    static func dictionary(atPlist path: String) -> [String: Any]? {
         guard let data = try? Data(contentsOf: URL(fileURLWithPath: path), options: [.mappedIfSafe]),
               data.count < 4_000_000,
               let object = try? PropertyListSerialization.propertyList(from: data, format: nil),
               let plist = object as? [String: Any]
         else { return nil }
-
-        if let program = plist["Program"] as? String { return program }
-        // `ProgramArguments` is argv, so argv[0] is the executable.
-        return (plist["ProgramArguments"] as? [String])?.first
+        return plist
     }
 
     /// What a job's target says about whether the job is still wanted.
@@ -108,9 +112,65 @@ public enum LaunchItemAttribution {
         liveTargetPrefixes.value().contains(ProtectedPaths.normalize(path))
     }
 
-    /// Forget the cached launch-item index. Called at the start of a scan.
+    /// Forget the cached launch-item indexes. Called at the start of a scan.
     public static func invalidate() {
         liveTargetPrefixes.reset()
+        relaunchIndex.reset()
+    }
+
+    /// A launchd job that brings a program straight back after it is killed.
+    public struct RelaunchingJob: Sendable, Equatable {
+        public var plistPath: String
+        public var label: String
+        /// Whether the user could stop it from the startup-items screen, which
+        /// only manages jobs in the three directories read below.
+        public var isUserManageable: Bool
+    }
+
+    /// The job that would restart `executable`, if one would.
+    ///
+    /// `KeepAlive` means launchd owns the process's lifetime: kill it and it is
+    /// back, with a new PID, in about a second. Three daemons on the machine
+    /// this was written against carry it — two of them belonging to apps the
+    /// residue scanner offers to remove — so "强制结束" on one of those is a
+    /// button that visibly does nothing, which is exactly the shape of failure
+    /// `privilegedHelperUnavailable` exists to avoid elsewhere.
+    ///
+    /// The real remedy is to quarantine the plist first (what the startup
+    /// screen calls 停用); after that the kill sticks.
+    public static func relaunchingJob(forProgram executable: String) -> RelaunchingJob? {
+        relaunchIndex.value()[ProtectedPaths.normalize(executable)]
+    }
+
+    /// `KeepAlive` is either a Bool or a dictionary of conditions; a dictionary
+    /// means "keep alive under these circumstances", which is still keep-alive.
+    public static func keepsAlive(_ value: Any?) -> Bool {
+        if let flag = value as? Bool { return flag }
+        if value is [String: Any] { return true }
+        return false
+    }
+
+    private static let relaunchIndex = Memoized<[String: RelaunchingJob]> {
+        var index: [String: RelaunchingJob] = [:]
+        for directory in launchItemDirectories {
+            for child in FileWalker.children(of: URL(fileURLWithPath: directory))
+            where child.pathExtension == "plist" {
+                guard let plist = dictionary(atPlist: child.path) else { continue }
+                guard keepsAlive(plist["KeepAlive"]) else { continue }
+                guard let program = (plist["Program"] as? String)
+                        ?? (plist["ProgramArguments"] as? [String])?.first
+                else { continue }
+
+                let label = (plist["Label"] as? String)
+                    ?? child.deletingPathExtension().lastPathComponent
+                index[ProtectedPaths.normalize(program)] = RelaunchingJob(
+                    plistPath: child.path,
+                    label: label,
+                    isUserManageable: true
+                )
+            }
+        }
+        return index
     }
 
     /// Every program a live launch item points at, plus each of their ancestor
@@ -122,7 +182,7 @@ public enum LaunchItemAttribution {
     /// candidates and a hundred launch items that is thousands of property-list
     /// parses to answer a question whose inputs did not change. Same shape as
     /// `RunningProcessIndex.occupiedPrefixes`, for the same reason.
-    private static let liveTargetPrefixes = MemoizedStringSet {
+    private static let liveTargetPrefixes = Memoized {
         var prefixes = Set<String>()
         for directory in launchItemDirectories {
             for child in FileWalker.children(of: URL(fileURLWithPath: directory))

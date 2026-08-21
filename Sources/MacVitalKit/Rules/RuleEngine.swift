@@ -146,6 +146,7 @@ public struct RuleEngine: Sendable {
                 blockedBy: BlockingProcess(
                     pid: process.pid,
                     bundleIdentifier: process.bundleIdentifier,
+                    executablePath: process.executablePath,
                     name: processIndex.describe(process)
                 )
             )

@@ -65,7 +65,7 @@ public enum SystemDomainIndex {
         "org.freedesktop", "com.microsoft.autoupdate.helper",
     ]
 
-    private static let prefixes = MemoizedStringSet {
+    private static let prefixes = Memoized {
         var found = known
         for directory in systemLaunchDirectories {
             for child in FileWalker.children(of: URL(fileURLWithPath: directory))
@@ -81,17 +81,17 @@ public enum SystemDomainIndex {
     }
 }
 
-/// A set built on first use and thrown away on demand.
-final class MemoizedStringSet: @unchecked Sendable {
+/// A value built on first use and thrown away on demand.
+final class Memoized<Value: Sendable>: @unchecked Sendable {
     private let lock = NSLock()
-    private let build: () -> Set<String>
-    private var cached: Set<String>?
+    private let build: () -> Value
+    private var cached: Value?
 
-    init(_ build: @escaping () -> Set<String>) {
+    init(_ build: @escaping () -> Value) {
         self.build = build
     }
 
-    func value() -> Set<String> {
+    func value() -> Value {
         lock.lock()
         if let cached {
             lock.unlock()

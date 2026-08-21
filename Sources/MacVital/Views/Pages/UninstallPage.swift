@@ -97,10 +97,24 @@ struct UninstallPage: View {
             }
             Button("取消", role: .cancel) {}
         } message: {
-            Text("将强制结束：\(model.stubbornTargets.joined(separator: "、"))。\n\n"
-                 + "强制结束不给程序保存的机会，未保存的内容会直接丢失，正在写入的文件也可能损坏。"
-                 + "只有在它已经没有响应、或你确定没有未保存内容时才这么做。")
+            Text(forceQuitWarning)
         }
+    }
+
+    /// Built outside the view builder: assembled inline it was a single
+    /// expression the type checker gave up on.
+    private var forceQuitWarning: String {
+        var text = "将强制结束：\(model.stubbornTargets.joined(separator: "、"))。\n\n"
+        text += "强制结束不给程序保存的机会，未保存的内容会直接丢失，正在写入的文件也可能损坏。"
+        text += "只有在它已经没有响应、或你确定没有未保存内容时才这么做。"
+
+        let relaunching = model.relaunchingBlockers
+        if !relaunching.isEmpty {
+            text += "\n\n注意：\(relaunching.joined(separator: "、"))"
+            text += " 由启动项托管（KeepAlive），结束后 launchd 会立刻重新启动。"
+            text += "先在「开机启动项」里停用对应条目，卸载才会彻底。"
+        }
+        return text
     }
 
     private var searchField: some View {
