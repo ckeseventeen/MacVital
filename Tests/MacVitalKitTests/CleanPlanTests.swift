@@ -132,10 +132,29 @@ final class InstalledAppIndexTests: XCTestCase {
         }
     }
 
-    /// The case pure string matching gets wrong today: a helper named after a
-    /// vendor whose main app is still installed.
-    func testVendorPrefixIsFlaggedRatherThanTreatedAsOrphan() {
-        guard case .vendorInstalled = index.match(residueName: "com.acme.Editor.Updater") else {
+    /// An identifier hanging off an installed app's own identifier is that
+    /// app's — its updater, its extension, its helper.
+    ///
+    /// This used to assert `.vendorInstalled`, which still reaches the user as
+    /// a finding. The assertion was wrong, and a machine-wide audit showed what
+    /// it cost: Gemini's launcher, Claude's ShipIt cache, WPS's Finder
+    /// extension, nine Safari extensions and UURemote's helper were all listed
+    /// as the residue of uninstalled apps, while every one of those apps sat in
+    /// /Applications. There is nothing ambiguous about `com.acme.Editor.Updater`
+    /// while `com.acme.Editor` is installed.
+    func testIdentifierHangingOffAnInstalledAppBelongsToIt() {
+        guard case .installed(let app) = index.match(residueName: "com.acme.Editor.Updater") else {
+            return XCTFail("expected the extension to attribute to its app")
+        }
+        XCTAssertEqual(app.bundleIdentifier, "com.acme.Editor")
+    }
+
+    /// The genuinely ambiguous case, which must still be flagged rather than
+    /// silently kept or silently removed: the *vendor* is installed, but this
+    /// exact identifier is not any app — a shared component, or a helper from
+    /// something since uninstalled.
+    func testVendorPrefixIsStillFlagged() {
+        guard case .vendorInstalled = index.match(residueName: "com.acme.OldThing") else {
             return XCTFail("expected vendor match")
         }
     }

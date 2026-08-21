@@ -141,15 +141,31 @@ public struct InstalledAppIndex: Sendable {
         if let app = apps.first(where: { $0.bundleIdentifier.lowercased() == token }) {
             return .installed(app)
         }
-        // Progressively shorter reverse-DNS prefixes: com.acme.Editor.helper
-        // should match an installed com.acme.Editor.
+        // An identifier hanging off an installed app's own identifier belongs
+        // to that app — it is an extension, a helper, an updater.
+        //
+        // This returned `.vendorInstalled`, which still reaches the user as a
+        // finding (labelled "同厂商仍在使用"). But there is nothing ambiguous
+        // about `com.google.GeminiMacOS.launcher` while `com.google.GeminiMacOS`
+        // is installed: it is Gemini's launcher. A machine-wide audit found
+        // twenty-odd such rows — Gemini's launcher, Claude's ShipIt cache,
+        // WPS's Finder extension, nine Safari extensions, UURemote's helper —
+        // every one of them belonging to an app sitting in /Applications.
+        //
+        // `AppUninstallPlanner.name(_:belongsTo:)` has always read this shape
+        // as "belongs to". The disagreement was the bug, as it was for the
+        // `group.` prefix above.
+        //
+        // The remaining `.vendorInstalled` case is the genuinely ambiguous one:
+        // the *vendor* is installed but this exact identifier is not any app —
+        // a shared component, or a stale helper from something since removed.
         let parts = token.split(separator: ".")
         if parts.count >= 3 {
             for length in stride(from: parts.count - 1, through: 2, by: -1) {
                 let candidate = parts.prefix(length).joined(separator: ".")
-                if bundleIDs.contains(candidate) {
-                    return .vendorInstalled(candidate)
-                }
+                guard let app = apps.first(where: { $0.bundleIdentifier.lowercased() == candidate })
+                else { continue }
+                return .installed(app)
             }
         }
         if parts.count >= 2 {
