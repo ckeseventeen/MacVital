@@ -122,6 +122,22 @@ public struct InstalledAppIndex: Sendable {
         let token = Self.identifierToken(from: residueName).lowercased()
         guard !token.isEmpty else { return .none }
 
+        // Shared containers are named `group.<bundleid>` or
+        // `<TEAMID>.<bundleid>`, and this matcher did not know it. Every
+        // sandboxed app's group container therefore came back `.none` — "no
+        // installed app owns this" — and the residue scanner offered it for
+        // removal. `group.com.nebula.karing` belongs to Karing, which was
+        // installed and running; wiping it made Karing re-initialise from
+        // scratch, over and over.
+        //
+        // `AppUninstallPlanner.name(_:belongsTo:)` has understood both shapes
+        // since it was written. This is the same knowledge, on the side that
+        // decides whether something is residue at all.
+        if let inner = Self.strippedContainerPrefix(token) {
+            let unprefixed = match(residueName: inner)
+            if case .none = unprefixed {} else { return unprefixed }
+        }
+
         if let app = apps.first(where: { $0.bundleIdentifier.lowercased() == token }) {
             return .installed(app)
         }
@@ -181,6 +197,25 @@ public struct InstalledAppIndex: Sendable {
             token.removeLast(suffix.count)
         }
         return token
+    }
+
+    /// The identifier inside a shared-container name, or nil if there is no
+    /// such prefix.
+    ///
+    /// Exactly two shapes are accepted, both anchored at the first dot: a
+    /// literal `group`, or a ten-character alphanumeric team identifier.
+    /// Anything else after a dot is another identifier component, not a
+    /// prefix — stripping loosely here would let `com.acme` claim
+    /// `com.acme.Other`, which is the over-matching this whole file avoids.
+    static func strippedContainerPrefix(_ token: String) -> String? {
+        guard let dot = token.firstIndex(of: ".") else { return nil }
+        let prefix = String(token[token.startIndex..<dot])
+        let rest = String(token[token.index(after: dot)...])
+        guard !rest.isEmpty else { return nil }
+
+        let isTeamIdentifier = prefix.count == 10 && prefix.allSatisfy { $0.isLetter || $0.isNumber }
+        guard isTeamIdentifier || prefix == "group" else { return nil }
+        return rest
     }
 
     /// Below this, a token is too generic to attribute anything with — `go`,
