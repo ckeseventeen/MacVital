@@ -136,7 +136,7 @@ Sources/
     Annotate/           标注对象模型、画布、屏幕画笔、白板
     Screenshot/         截图、录屏、局域网直播
   MacVitalHelper/       特权助手（root，无 entitlement）
-Tests/MacVitalKitTests/ 197 个测试，全部针对安全核心
+Tests/MacVitalKitTests/ 215 个测试，全部针对安全核心
 Tools/MakeAppIcon.swift 图标生成脚本（图标可复现）
 ```
 

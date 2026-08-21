@@ -11,6 +11,9 @@ struct StartupPage: View {
     @EnvironmentObject private var environment: AppEnvironment
     @StateObject private var model: StartupViewModel
     @State private var confirming = false
+    /// The row whose process refused a graceful quit. Set only after one has
+    /// been tried and failed.
+    @State private var forceTarget: StartupViewModel.Row?
 
     init(environment: AppEnvironment) {
         _model = StateObject(wrappedValue: StartupViewModel(environment: environment))
@@ -58,6 +61,29 @@ struct StartupPage: View {
             Button("取消", role: .cancel) {}
         } message: {
             Text("配置文件会移入隔离区，下次登录起不再自动运行。已在运行的进程不受影响，随时可以还原。")
+        }
+        .confirmationDialog(
+            "强制结束「\(forceTarget?.item.displayName ?? "")」？",
+            isPresented: Binding(get: { forceTarget != nil }, set: { if !$0 { forceTarget = nil } }),
+            titleVisibility: .visible
+        ) {
+            Button("强制结束", role: .destructive) {
+                guard let row = forceTarget else { return }
+                forceTarget = nil
+                Task { await model.stop(row, force: true) }
+            }
+            Button("取消", role: .cancel) { forceTarget = nil }
+        } message: {
+            Text("它没有响应退出请求。强制结束不给程序保存的机会，未保存的内容会直接丢失，"
+                 + "正在写入的文件也可能损坏。")
+        }
+        .alert("已停止", isPresented: Binding(
+            get: { model.stopMessage != nil },
+            set: { if !$0 { model.clearStopMessage() } }
+        )) {
+            Button("好") { model.clearStopMessage() }
+        } message: {
+            Text(model.stopMessage ?? "")
         }
     }
 
@@ -119,7 +145,14 @@ struct StartupPage: View {
                             row: row,
                             isChecked: model.selection.contains(row.id),
                             toggle: { model.toggle(row) },
-                            reveal: { model.reveal(row) }
+                            reveal: { model.reveal(row) },
+                            stop: {
+                                Task {
+                                    // A refusal is the only thing that unlocks
+                                    // the harsher option, and it asks first.
+                                    if await model.stop(row) == false { forceTarget = row }
+                                }
+                            }
                         )
                     }
                 } header: {
@@ -241,6 +274,7 @@ private struct StartupRow: View {
     let isChecked: Bool
     let toggle: () -> Void
     let reveal: () -> Void
+    let stop: () -> Void
 
     var body: some View {
         HStack(spacing: 11) {
@@ -284,6 +318,23 @@ private struct StartupRow: View {
 
             Spacer(minLength: 8)
 
+            // Offered only where it would actually work. A `KeepAlive` job is
+            // owned by launchd: kill it and it is back in about a second, and
+            // quarantining the plist does not change that either — the job
+            // stays loaded until the next login. A button there would do
+            // nothing visible, which is worse than not having one.
+            if row.canStopNow {
+                Button("停止", action: stop)
+                    .controlSize(.small)
+                    .help("结束正在运行的进程。这不影响它下次登录是否启动。")
+            } else if row.running != nil, row.stoppingWouldNotStick {
+                Text("常驻，需重新登录")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Theme.tertiaryLabel)
+                    .help("launchd 会立刻重新启动它，所以现在结束它没有意义。"
+                          + "停用之后重新登录，它才不会再起来。")
+            }
+
             if row.decision.admission != .allow {
                 AdmissionBadge(decision: row.decision)
             }
@@ -292,6 +343,9 @@ private struct StartupRow: View {
         .opacity(row.isSelectable ? 1 : 0.5)
         .contextMenu {
             Button("在访达中显示", action: reveal)
+            if row.canStopNow {
+                Button("停止运行中的进程", action: stop)
+            }
         }
     }
 }
