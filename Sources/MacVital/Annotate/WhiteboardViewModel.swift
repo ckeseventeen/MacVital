@@ -87,8 +87,14 @@ final class WhiteboardViewModel: ObservableObject {
         }
     }
 
+    /// Strictly `canUndo`, matching `ScreenPenController`.
+    ///
+    /// This read `canUndo || !isEmpty`, which is the exact bug the pen fixed
+    /// and this copy kept: a board loaded from another tab has objects but an
+    /// empty undo stack, so the button lit up and did nothing when pressed —
+    /// indistinguishable from a missed click.
     private func refreshUndoState() {
-        canUndo = canvas.map { $0.document.canUndo || !$0.document.isEmpty } ?? false
+        canUndo = canvas?.document.canUndo ?? false
     }
 
     // MARK: - Commands
@@ -162,6 +168,19 @@ final class WhiteboardViewModel: ObservableObject {
     /// make the output depend on how the user happened to resize the app.
     private static let pageSize = CGSize(width: 1600, height: 1000)
 
+    /// The largest centred rect of `size`'s aspect ratio that fits in `bounds`.
+    private static func fit(_ size: CGSize, into bounds: CGRect) -> CGRect {
+        guard size.width > 0, size.height > 0 else { return bounds }
+        let scale = min(bounds.width / size.width, bounds.height / size.height)
+        let fitted = CGSize(width: size.width * scale, height: size.height * scale)
+        return CGRect(
+            x: bounds.midX - fitted.width / 2,
+            y: bounds.midY - fitted.height / 2,
+            width: fitted.width,
+            height: fitted.height
+        )
+    }
+
     private func renderPNG(board: Board) -> Data? {
         guard let rep = NSBitmapImageRep(
             bitmapDataPlanes: nil,
@@ -203,7 +222,11 @@ final class WhiteboardViewModel: ObservableObject {
     private func drawBoard(_ board: Board, in rect: CGRect) {
         NSColor.white.setFill()
         rect.fill()
-        board.image?.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1)
+        // Aspect-fit, centred. Drawing into `rect` stretched every imported
+        // image to the page, so the export did not match what was on screen.
+        if let image = board.image {
+            image.draw(in: Self.fit(image.size, into: rect), from: .zero, operation: .sourceOver, fraction: 1)
+        }
 
         let canvasSize = canvas?.bounds.size ?? rect.size
         let scale = min(rect.width / max(canvasSize.width, 1), rect.height / max(canvasSize.height, 1))

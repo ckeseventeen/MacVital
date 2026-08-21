@@ -36,14 +36,31 @@ final class LiveBroadcaster: NSObject, ObservableObject {
     private var listener: NWListener?
     private var stream: SCStream?
     private var clients: [ObjectIdentifier: NWConnection] = [:]
-    private let context = CIContext()
+    private var encoder: FrameEncoder?
     private var latestJPEG: Data?
-    private var lastFrameAt: CFAbsoluteTime = 0
+    /// Frames are encoded off the main actor and published back asynchronously,
+    /// so a late arrival must not replace a newer frame already on screen.
+    private var latestSequence: UInt64 = 0
     private let sampleQueue = DispatchQueue(label: "com.macvital.live.samples")
+
+    /// An unguessable path component, regenerated for every broadcast.
+    ///
+    /// The server binds every interface, so without this anyone who port-scans
+    /// the network gets a live view of the screen — a conference-room LAN is
+    /// not a trusted network, and a URL is the only thing a viewer needs. This
+    /// is not authentication (there is no account to authenticate), it is the
+    /// capability model a share link uses: knowing the URL is the permission,
+    /// and the URL stops working when the broadcast stops.
+    private var sessionToken = ""
 
     private static let boundary = "macvitalframe"
 
-    var url: String? { addresses.first.map { "http://\($0):\(port)" } }
+    /// The address to read off the screen and type on another device.
+    func viewerURL(for address: String) -> String {
+        "http://\(address):\(port)/\(sessionToken)"
+    }
+
+    var url: String? { addresses.first.map { viewerURL(for: $0) } }
 
     // MARK: - Lifecycle
 
@@ -54,6 +71,7 @@ final class LiveBroadcaster: NSObject, ObservableObject {
     func start(excluding ownWindow: NSWindow?) async {
         guard !isBroadcasting else { return }
         do {
+            sessionToken = Self.makeToken()
             try startServer()
             try await startCapture(excluding: ownWindow)
             addresses = Self.localAddresses()
@@ -75,7 +93,12 @@ final class LiveBroadcaster: NSObject, ObservableObject {
         self.stream = nil
         Task { try? await stream?.stopCapture() }
 
+        encoder?.invalidate()
+        encoder = nil
         latestJPEG = nil
+        latestSequence = 0
+        // A stopped broadcast's URL must not work again.
+        sessionToken = ""
         addresses = []
         isBroadcasting = false
     }
@@ -102,24 +125,79 @@ final class LiveBroadcaster: NSObject, ObservableObject {
     }
 
     private func accept(_ connection: NWConnection) {
+        // Set before `start`: a handler installed afterwards can miss the state
+        // transition it was installed to catch.
+        connection.stateUpdateHandler = { [weak self] state in
+            switch state {
+            case .cancelled, .failed:
+                Task { @MainActor in self?.drop(ObjectIdentifier(connection)) }
+            default:
+                break
+            }
+        }
         connection.start(queue: .main)
-        // One read is enough: we only care whether the request line asks for
-        // the page or the stream, and both fit in the first packet.
+        // One read is enough: we only care which path the request line asks
+        // for, and a request line fits in the first packet.
         connection.receive(minimumIncompleteLength: 1, maximumLength: 4096) { [weak self] data, _, _, _ in
             Task { @MainActor in
                 guard let self else { return }
                 let request = data.flatMap { String(data: $0, encoding: .utf8) } ?? ""
-                if request.contains("GET /stream") {
-                    self.beginStream(on: connection)
-                } else {
-                    self.servePage(on: connection)
+                switch self.route(request) {
+                case .page:   self.servePage(on: connection)
+                case .stream: self.beginStream(on: connection)
+                case .reject: self.serveNotFound(on: connection)
                 }
             }
         }
     }
 
+    private enum Route {
+        case page
+        case stream
+        case reject
+    }
+
+    /// `GET /<token>` and `GET /<token>/stream`, and nothing else. A request
+    /// carrying the wrong token gets a plain 404 — the same answer a stopped
+    /// broadcast gives, so probing cannot tell the two apart.
+    private func route(_ request: String) -> Route {
+        guard !sessionToken.isEmpty else { return .reject }
+        guard let line = request.split(separator: "\r\n", maxSplits: 1).first else { return .reject }
+        let fields = line.split(separator: " ")
+        guard fields.count >= 2, fields[0] == "GET" else { return .reject }
+
+        var path = String(fields[1])
+        if let query = path.firstIndex(of: "?") { path = String(path[path.startIndex..<query]) }
+        while path.count > 1 && path.hasSuffix("/") { path.removeLast() }
+
+        if path == "/\(sessionToken)" { return .page }
+        if path == "/\(sessionToken)/stream" { return .stream }
+        return .reject
+    }
+
+    private func serveNotFound(on connection: NWConnection) {
+        let response = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+        connection.send(content: Data(response.utf8), completion: .contentProcessed { _ in
+            connection.cancel()
+        })
+    }
+
+    /// Eight characters from a 31-letter alphabet — about 40 bits.
+    ///
+    /// Sized against the actual threat and the actual use. The point of this
+    /// feature is that someone reads a URL off a projector and types it on
+    /// their phone, so a 32-character hex string would defeat the feature to
+    /// defend it. 40 bits is far past what an attacker can walk through
+    /// against a broadcast that lasts an hour and whose token changes every
+    /// time it starts. `I`, `L`, `O` and `U` are left out: they are the ones
+    /// people mistype off a screen.
+    private static func makeToken() -> String {
+        let alphabet = Array("0123456789abcdefghjkmnpqrstvwxyz")
+        return String((0..<8).map { _ in alphabet.randomElement()! })
+    }
+
     private func servePage(on connection: NWConnection) {
-        let html = Self.page(port: port)
+        let html = Self.page(token: sessionToken)
         let body = Data(html.utf8)
         var response = "HTTP/1.1 200 OK\r\n"
         response += "Content-Type: text/html; charset=utf-8\r\n"
@@ -139,15 +217,8 @@ final class LiveBroadcaster: NSObject, ObservableObject {
         let key = ObjectIdentifier(connection)
         clients[key] = connection
         viewerCount = clients.count
+        encoder?.setHasViewers(true)
 
-        connection.stateUpdateHandler = { [weak self] state in
-            switch state {
-            case .cancelled, .failed:
-                Task { @MainActor in self?.drop(key) }
-            default:
-                break
-            }
-        }
         connection.send(content: Data(header.utf8), completion: .contentProcessed { _ in })
 
         // Send the current frame immediately so the page is not blank until the
@@ -159,6 +230,7 @@ final class LiveBroadcaster: NSObject, ObservableObject {
         clients[key]?.cancel()
         clients.removeValue(forKey: key)
         viewerCount = clients.count
+        encoder?.setHasViewers(!clients.isEmpty)
     }
 
     private func broadcast(_ jpeg: Data) {
@@ -204,26 +276,27 @@ final class LiveBroadcaster: NSObject, ObservableObject {
             configuration: configuration,
             delegate: self
         )
-        try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: sampleQueue)
+
+        // Encoding happens on `sampleQueue`, not the main actor. Only the
+        // finished JPEG crosses over. See `FrameEncoder`.
+        let encoder = FrameEncoder(frameRate: frameRate, quality: quality) { [weak self] jpeg, sequence in
+            Task { @MainActor in self?.publish(jpeg, sequence: sequence) }
+        }
+        self.encoder = encoder
+        encoder.setHasViewers(!clients.isEmpty)
+
+        try stream.addStreamOutput(encoder, type: .screen, sampleHandlerQueue: sampleQueue)
         try await stream.startCapture()
         self.stream = stream
     }
 
-    fileprivate func encodeAndBroadcast(_ sampleBuffer: CMSampleBuffer) {
-        // Rate-limit here as well as in the stream config: a burst of frames
-        // would otherwise queue JPEGs faster than the sockets drain them.
-        let now = CFAbsoluteTimeGetCurrent()
-        guard now - lastFrameAt >= 1.0 / Double(frameRate) else { return }
-        lastFrameAt = now
-
-        guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
-        let image = CIImage(cvPixelBuffer: pixelBuffer)
-        guard let jpeg = context.jpegRepresentation(
-            of: image,
-            colorSpace: CGColorSpaceCreateDeviceRGB(),
-            options: [kCGImageDestinationLossyCompressionQuality as CIImageRepresentationOption: quality]
-        ) else { return }
-
+    /// Takes a finished frame from the encoder and fans it out.
+    fileprivate func publish(_ jpeg: Data, sequence: UInt64) {
+        // Frames are encoded in order but published through independent tasks,
+        // which are not ordered. Dropping a stale one is cheaper than showing
+        // the screen going backwards.
+        guard sequence > latestSequence else { return }
+        latestSequence = sequence
         latestJPEG = jpeg
         guard !clients.isEmpty else { return }
         broadcast(jpeg)
@@ -260,7 +333,7 @@ final class LiveBroadcaster: NSObject, ObservableObject {
         ScreenCapturePermission.isDenial(error) ? ScreenCapturePermission.message : error.localizedDescription
     }
 
-    private static func page(port: UInt16) -> String {
+    private static func page(token: String) -> String {
         """
         <!DOCTYPE html><html lang="zh"><head><meta charset="utf-8">
         <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -271,21 +344,85 @@ final class LiveBroadcaster: NSObject, ObservableObject {
           img{max-width:100%;max-height:100%;object-fit:contain}
           p{color:#888;font-size:14px}
         </style></head>
-        <body><img src="/stream" alt="屏幕直播"
+        <body><img src="/\(token)/stream" alt="屏幕直播"
           onerror="document.body.innerHTML='<p>直播已结束</p>'"></body></html>
         """
     }
 }
 
-extension LiveBroadcaster: SCStreamOutput {
-    nonisolated func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
+/// Rate-limits and JPEG-encodes frames on the capture queue.
+///
+/// This was a `Task { @MainActor in ... }` per frame, which put JPEG encoding
+/// of a full display at 12 fps on the thread drawing the UI — and rate-limited
+/// only *after* the hop, so a burst still queued up a task per frame. The
+/// screen-capture queue is serial and already ordered; the only thing that
+/// needs the main actor is the finished `Data`.
+private final class FrameEncoder: NSObject, SCStreamOutput, @unchecked Sendable {
+    private let context = CIContext()
+    private let lock = NSLock()
+    private let frameRate: Int
+    private let quality: Double
+    private let publish: @Sendable (Data, UInt64) -> Void
+
+    private var lastFrameAt: CFAbsoluteTime = 0
+    private var sequence: UInt64 = 0
+    private var hasViewers = false
+    private var hasCachedFrame = false
+    private var invalidated = false
+
+    init(frameRate: Int, quality: Double, publish: @escaping @Sendable (Data, UInt64) -> Void) {
+        self.frameRate = max(frameRate, 1)
+        self.quality = quality
+        self.publish = publish
+        super.init()
+    }
+
+    func setHasViewers(_ value: Bool) {
+        lock.lock()
+        hasViewers = value
+        lock.unlock()
+    }
+
+    func invalidate() {
+        lock.lock()
+        invalidated = true
+        lock.unlock()
+    }
+
+    func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
         guard type == .screen, sampleBuffer.isValid else { return }
         guard let attachments = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, createIfNecessary: false) as? [[SCStreamFrameInfo: Any]],
               let raw = attachments.first?[.status] as? Int,
               SCFrameStatus(rawValue: raw) == .complete
         else { return }
 
-        Task { @MainActor in self.encodeAndBroadcast(sampleBuffer) }
+        let now = CFAbsoluteTimeGetCurrent()
+        lock.lock()
+        let skip = invalidated
+            // Nobody is watching and a frame is already cached for whoever
+            // connects next: encoding again is pure heat.
+            || (!hasViewers && hasCachedFrame)
+            || now - lastFrameAt < 1.0 / Double(frameRate)
+        if !skip { lastFrameAt = now }
+        lock.unlock()
+        guard !skip else { return }
+
+        guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+        let image = CIImage(cvPixelBuffer: pixelBuffer)
+        guard let jpeg = context.jpegRepresentation(
+            of: image,
+            colorSpace: CGColorSpaceCreateDeviceRGB(),
+            options: [kCGImageDestinationLossyCompressionQuality as CIImageRepresentationOption: quality]
+        ) else { return }
+
+        lock.lock()
+        guard !invalidated else { lock.unlock(); return }
+        sequence += 1
+        let stamp = sequence
+        hasCachedFrame = true
+        lock.unlock()
+
+        publish(jpeg, stamp)
     }
 }
 

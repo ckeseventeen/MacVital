@@ -179,13 +179,16 @@ struct RecordPage: View {
                             .foregroundStyle(Theme.secondaryLabel)
                         ForEach(live.addresses, id: \.self) { address in
                             HStack(spacing: 10) {
-                                Text("http://\(address):\(live.port)")
+                                // The URL carries the session token — see
+                                // `LiveBroadcaster.viewerURL`. Building it by
+                                // hand here would hand out a link that 404s.
+                                Text(live.viewerURL(for: address))
                                     .font(.system(size: 15, weight: .medium, design: .monospaced))
                                     .textSelection(.enabled)
                                     .foregroundStyle(Theme.accent)
                                 Button {
                                     NSPasteboard.general.clearContents()
-                                    NSPasteboard.general.setString("http://\(address):\(live.port)", forType: .string)
+                                    NSPasteboard.general.setString(live.viewerURL(for: address), forType: .string)
                                 } label: {
                                     Image(systemName: "doc.on.doc")
                                 }

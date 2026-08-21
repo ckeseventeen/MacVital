@@ -31,9 +31,14 @@ final class ScreenPenController: NSObject, ObservableObject {
     private var canvases: [AnnotationCanvasView] = []
     private var focusLayers: [FocusOverlayView] = []
     private var windows: [ScreenPenWindow] = []
+    /// Display ID per entry, parallel to the three arrays above. Kept so a
+    /// screen that is still attached keeps the strokes drawn on it when the
+    /// arrangement changes.
+    private var displayIDs: [CGDirectDisplayID] = []
     private var paletteWindow: NSPanel?
     private var keyMonitor: Any?
     private var mouseMonitor: Any?
+    private var screenObserver: NSObjectProtocol?
     private var maskDragOrigin: CGPoint?
 
     var currentColor: Color { Color(nsColor: Self.palette[colorIndex]) }
@@ -45,10 +50,66 @@ final class ScreenPenController: NSObject, ObservableObject {
     func start() {
         guard !isActive, !NSScreen.screens.isEmpty else { return }
 
-        for screen in NSScreen.screens {
-            let window = ScreenPenWindow(screen: screen)
+        syncWindowsToScreens()
+        windows.first?.makeKey()
+
+        applyTool()
+        applyFocus()
+        showPalette()
+        installMonitors()
+
+        // Plugging in a projector is the main reason this feature exists, and
+        // the window set used to be built once at `start` and never revisited:
+        // a display attached afterwards stayed uncovered, and one detached left
+        // a window addressing a screen that was gone.
+        screenObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.isActive else { return }
+                self.syncWindowsToScreens()
+                self.applyTool()
+                self.applyFocus()
+                self.refreshUndoState()
+            }
+        }
+
+        isActive = true
+    }
+
+    /// Bring the window set in line with the screens attached right now.
+    ///
+    /// Screens that are still there keep their existing window, canvas and
+    /// strokes — rebuilding wholesale would erase whatever the presenter had
+    /// already drawn, which is the worst possible moment to do it.
+    private func syncWindowsToScreens() {
+        let screens = NSScreen.screens
+        let live = screens.compactMap { Self.displayID(of: $0) }
+
+        // Drop the ones whose display is gone.
+        for index in displayIDs.indices.reversed() where !live.contains(displayIDs[index]) {
+            windows[index].orderOut(nil)
+            windows.remove(at: index)
+            canvases.remove(at: index)
+            focusLayers.remove(at: index)
+            displayIDs.remove(at: index)
+        }
+
+        for screen in screens {
+            guard let id = Self.displayID(of: screen) else { continue }
             let frame = NSRect(origin: .zero, size: screen.frame.size)
 
+            // Still attached: it may have moved or been resized.
+            if let index = displayIDs.firstIndex(of: id) {
+                windows[index].setFrame(screen.frame, display: true)
+                windows[index].contentView?.frame = frame
+                windows[index].orderFrontRegardless()
+                continue
+            }
+
+            let window = ScreenPenWindow(screen: screen)
             let container = NSView(frame: frame)
             container.autoresizingMask = [.width, .height]
 
@@ -62,19 +123,18 @@ final class ScreenPenController: NSObject, ObservableObject {
             container.addSubview(canvas)
 
             window.contentView = container
+            window.acceptsMouseMovedEvents = true
             window.orderFrontRegardless()
 
             windows.append(window)
             canvases.append(canvas)
             focusLayers.append(focus)
+            displayIDs.append(id)
         }
-        windows.first?.makeKey()
+    }
 
-        applyTool()
-        applyFocus()
-        showPalette()
-        installMonitors()
-        isActive = true
+    private static func displayID(of screen: NSScreen) -> CGDirectDisplayID? {
+        screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID
     }
 
     func stop() {
@@ -85,12 +145,18 @@ final class ScreenPenController: NSObject, ObservableObject {
         keyMonitor = nil
         mouseMonitor = nil
 
+        if let screenObserver {
+            NotificationCenter.default.removeObserver(screenObserver)
+        }
+        screenObserver = nil
+
         paletteWindow?.orderOut(nil)
         paletteWindow = nil
         for window in windows { window.orderOut(nil) }
         windows.removeAll()
         canvases.removeAll()
         focusLayers.removeAll()
+        displayIDs.removeAll()
         isActive = false
         canUndo = false
         focusMode = .off

@@ -38,9 +38,8 @@ final class ScreenRecorder: NSObject, ObservableObject {
     @Published var showsCursor: Bool = true
 
     private var stream: SCStream?
-    private var writer: AVAssetWriter?
-    private var videoInput: AVAssetWriterInput?
-    private var startedAt: CMTime?
+    /// Owns the writer and receives frames directly on `sampleQueue`.
+    private var sink: FrameSink?
     private var outputURL: URL?
     private var frameSize: CGSize = .zero
     private let sampleQueue = DispatchQueue(label: "com.macvital.recorder.samples")
@@ -77,7 +76,10 @@ final class ScreenRecorder: NSObject, ObservableObject {
             try prepareWriter()
 
             let stream = SCStream(filter: filter, configuration: configuration, delegate: self)
-            try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: sampleQueue)
+            // The sink, not `self`: frames are handled on `sampleQueue` and
+            // never touch the main actor. See `FrameSink`.
+            guard let sink else { throw RecorderError.writerRejectedInput }
+            try stream.addStreamOutput(sink, type: .screen, sampleHandlerQueue: sampleQueue)
             try await stream.startCapture()
 
             self.stream = stream
@@ -113,10 +115,8 @@ final class ScreenRecorder: NSObject, ObservableObject {
         guard writer.canAdd(input) else { throw RecorderError.writerRejectedInput }
         writer.add(input)
 
-        self.writer = writer
-        self.videoInput = input
+        self.sink = FrameSink(writer: writer, input: input)
         self.outputURL = url
-        self.startedAt = nil
     }
 
     // MARK: - Stop
@@ -128,34 +128,45 @@ final class ScreenRecorder: NSObject, ObservableObject {
         try? await stream?.stopCapture()
         stream = nil
 
-        videoInput?.markAsFinished()
-        if let writer, writer.status == .writing {
-            await writer.finishWriting()
+        let outcome = await sink?.finish() ?? .empty
+        sink = nil
+
+        switch outcome {
+        case .completed:
+            if let url = outputURL, FileManager.default.fileExists(atPath: url.path) {
+                let asset = AVURLAsset(url: url)
+                let duration = (try? await asset.load(.duration).seconds) ?? 0
+                let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
+                let bytes = (attributes?[.size] as? NSNumber)?.int64Value ?? 0
+                latest = Recording(url: url, duration: duration, size: frameSize, bytes: bytes)
+            }
+        case .failed(let error):
+            // A writer that failed leaves a file that cannot be played. It used
+            // to be left in the temporary directory forever, because the only
+            // thing that cleaned up was the success path.
+            discardOutput()
+            errorMessage = "录制失败：\(error?.localizedDescription ?? "编码器中止")"
+        case .empty:
+            // Stopped before a single complete frame arrived. Nothing to keep
+            // and nothing to complain about.
+            discardOutput()
         }
 
-        if let url = outputURL, FileManager.default.fileExists(atPath: url.path) {
-            let asset = AVURLAsset(url: url)
-            let duration = (try? await asset.load(.duration).seconds) ?? 0
-            let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
-            let bytes = (attributes?[.size] as? NSNumber)?.int64Value ?? 0
-            latest = Recording(url: url, duration: duration, size: frameSize, bytes: bytes)
-        }
-
-        writer = nil
-        videoInput = nil
         outputURL = nil
-        startedAt = nil
         state = .idle
+    }
+
+    private func discardOutput() {
+        guard let url = outputURL else { return }
+        try? FileManager.default.removeItem(at: url)
     }
 
     private func teardown() async {
         try? await stream?.stopCapture()
         stream = nil
-        videoInput?.markAsFinished()
-        if let writer, writer.status == .writing { await writer.finishWriting() }
-        if let url = outputURL { try? FileManager.default.removeItem(at: url) }
-        writer = nil
-        videoInput = nil
+        _ = await sink?.finish()
+        sink = nil
+        discardOutput()
         outputURL = nil
     }
 
@@ -216,8 +227,41 @@ final class ScreenRecorder: NSObject, ObservableObject {
 
 // MARK: - Stream plumbing
 
-extension ScreenRecorder: SCStreamOutput {
-    nonisolated func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
+/// Owns the asset writer and takes frames on the capture queue.
+///
+/// Frames used to hop to the main actor, one `Task` per frame, and two separate
+/// things were wrong with that. Independent `Task`s have no ordering guarantee,
+/// so presentation timestamps could reach `append` out of order —
+/// `AVAssetWriterInput` fails the whole writer on that, and the
+/// `status == .writing` guard then silently swallows every later frame. The
+/// result is a recording that stops early with no error reported anywhere. And
+/// it put H.264 encoding of a 2x display, 30–60 times a second, on the thread
+/// drawing the UI.
+///
+/// ScreenCaptureKit already hands frames to a serial queue of our choosing, in
+/// order. Doing the work there is both correct and cheaper.
+private final class FrameSink: NSObject, SCStreamOutput, @unchecked Sendable {
+    enum Outcome {
+        /// A playable file was written.
+        case completed
+        /// No complete frame ever arrived.
+        case empty
+        case failed(Error?)
+    }
+
+    private let lock = NSLock()
+    private let writer: AVAssetWriter
+    private let input: AVAssetWriterInput
+    private var started = false
+    private var closed = false
+
+    init(writer: AVAssetWriter, input: AVAssetWriterInput) {
+        self.writer = writer
+        self.input = input
+        super.init()
+    }
+
+    func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
         guard type == .screen, sampleBuffer.isValid else { return }
 
         // ScreenCaptureKit delivers a frame for every vsync, including ones
@@ -228,9 +272,53 @@ extension ScreenRecorder: SCStreamOutput {
               SCFrameStatus(rawValue: raw) == .complete
         else { return }
 
-        Task { @MainActor in
-            self.append(sampleBuffer)
+        append(sampleBuffer)
+    }
+
+    private func append(_ sampleBuffer: CMSampleBuffer) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !closed else { return }
+
+        if writer.status == .unknown {
+            let start = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+            guard writer.startWriting() else { return }
+            writer.startSession(atSourceTime: start)
+            started = true
         }
+        guard writer.status == .writing, input.isReadyForMoreMediaData else { return }
+        input.append(sampleBuffer)
+    }
+
+    /// Closes the input and reports whether the file is usable. Safe to call
+    /// more than once; later calls report `.empty`.
+    func finish() async -> Outcome {
+        // The lock is taken in this synchronous step and released before the
+        // suspension point below. `NSLock` may not be held across an `await`:
+        // the continuation can resume on a different thread, which is undefined
+        // for a lock that must be unlocked by the thread that took it.
+        let state = close()
+
+        guard !state.wasClosed, state.didStart else { return .empty }
+        guard state.status == .writing else { return .failed(writer.error) }
+
+        await writer.finishWriting()
+        return writer.status == .completed ? .completed : .failed(writer.error)
+    }
+
+    private struct CloseState {
+        let wasClosed: Bool
+        let didStart: Bool
+        let status: AVAssetWriter.Status
+    }
+
+    private func close() -> CloseState {
+        lock.lock()
+        defer { lock.unlock() }
+        let state = CloseState(wasClosed: closed, didStart: started, status: writer.status)
+        closed = true
+        if state.didStart, !state.wasClosed { input.markAsFinished() }
+        return state
     }
 }
 
@@ -243,17 +331,3 @@ extension ScreenRecorder: SCStreamDelegate {
     }
 }
 
-private extension ScreenRecorder {
-    func append(_ sampleBuffer: CMSampleBuffer) {
-        guard let writer, let videoInput else { return }
-
-        if writer.status == .unknown {
-            let start = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
-            writer.startWriting()
-            writer.startSession(atSourceTime: start)
-            startedAt = start
-        }
-        guard writer.status == .writing, videoInput.isReadyForMoreMediaData else { return }
-        videoInput.append(sampleBuffer)
-    }
-}
