@@ -83,22 +83,30 @@ public struct AppResidueScanner: Scanner {
 
         let path = ProtectedPaths.normalize(url.path)
 
-        // A launchd job that still points at something on disk is not residue,
-        // whatever its filename suggests. Filename attribution is close to
-        // useless here: `com.docker.vmnetd.plist` matches no installed app
-        // because Docker Desktop's identifier is `com.docker.docker`, and
-        // `com.netease.uuremote.daemon.plist` matched nothing while
-        // UURemote.app sat in /Applications with its daemon running. Three
-        // working services were listed as the leftovers of uninstalled apps.
-        if url.pathExtension == "plist", LaunchItemAttribution.targetExists(forPlist: path) {
+        // A launchd job whose program lives inside an app that is still
+        // installed is not residue, whatever its filename suggests. Filename
+        // attribution is close to useless here: `com.netease.uuremote.daemon.plist`
+        // matched nothing while UURemote.app sat in /Applications with its
+        // daemon running.
+        //
+        // Note how narrow this is. The first version asked only whether the
+        // target file existed, and that hid three genuinely orphaned daemons:
+        // uninstalling an app leaves its privileged helper in
+        // /Library/PrivilegedHelperTools, so the daemon points at a real file
+        // forever. Docker, Clash Verge and Bitboo were all gone from
+        // /Applications while their helpers sat there untouched.
+        if url.pathExtension == "plist",
+           LaunchItemAttribution.belongsToAnInstalledApp(plist: path) {
             Log.scan.debug("skipping live launch item \(Log.path(path), privacy: .public)")
             return nil
         }
 
         // Same argument from the other end: a privileged helper is named after
-        // its vendor, so nothing places it either — but the daemon that
-        // launches it does, and removing the helper breaks that daemon.
-        if LaunchItemAttribution.isReferencedByALaunchItem(path) {
+        // its vendor, so nothing places it either — but a *live* daemon that
+        // launches it does, and removing the helper would break that daemon.
+        // Only live ones count, or an orphaned daemon and its orphaned helper
+        // would vouch for each other indefinitely.
+        if LaunchItemAttribution.isReferencedByALiveLaunchItem(path) {
             Log.scan.debug("skipping referenced helper \(Log.path(path), privacy: .public)")
             return nil
         }

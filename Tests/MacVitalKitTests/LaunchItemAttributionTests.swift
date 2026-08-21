@@ -12,9 +12,15 @@ import XCTest
 ///   * `com.netease.uuremote.daemon.plist` — while `UURemote.app` sat in
 ///     `/Applications` with its daemon loaded and running.
 ///
-/// Acting on that would have broken Docker, a VPN and an accelerator. The plist
-/// itself says who it belongs to: `Program` is a path, and a path that exists
-/// settles the question.
+/// Acting on that would have broken a running accelerator. The plist itself
+/// says who it belongs to: `Program` is a path.
+///
+/// But *only* a path inside an installed `.app` settles it. The first fix asked
+/// merely whether the target existed, and that was wrong in the other
+/// direction: uninstalling an app leaves its privileged helper in
+/// `/Library/PrivilegedHelperTools`, so an orphaned daemon goes on pointing at
+/// a real file forever. Docker, Clash Verge and Bitboo were all gone from
+/// `/Applications` while their helpers sat there — and the "fix" hid all three.
 final class LaunchItemAttributionTests: XCTestCase {
 
     private var sandbox: URL!
@@ -58,7 +64,7 @@ final class LaunchItemAttributionTests: XCTestCase {
         ])
 
         XCTAssertEqual(LaunchItemAttribution.program(atPlist: plist.path), binary.path)
-        XCTAssertTrue(LaunchItemAttribution.targetExists(forPlist: plist.path))
+        XCTAssertEqual(LaunchItemAttribution.liveness(ofPlist: plist.path), .bareHelper(program: binary.path))
     }
 
     /// Jobs use one or the other; `ProgramArguments` is argv, so argv[0] is the
@@ -71,7 +77,7 @@ final class LaunchItemAttributionTests: XCTestCase {
         ])
 
         XCTAssertEqual(LaunchItemAttribution.program(atPlist: plist.path), binary.path)
-        XCTAssertTrue(LaunchItemAttribution.targetExists(forPlist: plist.path))
+        XCTAssertEqual(LaunchItemAttribution.liveness(ofPlist: plist.path), .bareHelper(program: binary.path))
     }
 
     /// The genuinely orphaned case, which must still be reported.
@@ -81,7 +87,7 @@ final class LaunchItemAttributionTests: XCTestCase {
             "Program": sandbox.appendingPathComponent("does-not-exist").path,
         ])
 
-        XCTAssertFalse(LaunchItemAttribution.targetExists(forPlist: plist.path))
+        XCTAssertEqual(LaunchItemAttribution.liveness(ofPlist: plist.path), .targetMissing)
     }
 
     func testMalformedPlistIsNotClaimedToExist() throws {
@@ -89,7 +95,7 @@ final class LaunchItemAttributionTests: XCTestCase {
         try Data("not a plist".utf8).write(to: url)
 
         XCTAssertNil(LaunchItemAttribution.program(atPlist: url.path))
-        XCTAssertFalse(LaunchItemAttribution.targetExists(forPlist: url.path))
+        XCTAssertEqual(LaunchItemAttribution.liveness(ofPlist: url.path), .targetMissing)
     }
 
     // MARK: - Enclosing bundle
@@ -122,19 +128,72 @@ final class LaunchItemAttributionTests: XCTestCase {
     /// job in a system directory from a test.
     func testUnreferencedPathIsNotClaimedAsReferenced() throws {
         let binary = try makeExecutable("nobody-launches-this")
-        XCTAssertFalse(LaunchItemAttribution.isReferencedByALaunchItem(binary.path))
+        XCTAssertFalse(LaunchItemAttribution.isReferencedByALiveLaunchItem(binary.path))
     }
 
-    /// A helper that a real daemon on this machine points at must be seen as
-    /// referenced — that is what keeps Docker's vmnetd out of the residue list.
-    func testHelperReferencedByARealDaemonIsRecognised() throws {
-        let daemons = (try? FileManager.default.contentsOfDirectory(atPath: "/Library/LaunchDaemons")) ?? []
-        let targets = daemons
+    /// Only a *live* job's reference counts. An orphaned daemon still points at
+    /// its orphaned helper, and counting that would have the two vouch for each
+    /// other indefinitely — neither would ever be reported.
+    func testHelperReferencedByALiveDaemonIsRecognised() throws {
+        let directory = "/Library/LaunchDaemons"
+        let live = ((try? FileManager.default.contentsOfDirectory(atPath: directory)) ?? [])
             .filter { $0.hasSuffix(".plist") }
-            .compactMap { LaunchItemAttribution.program(atPlist: "/Library/LaunchDaemons/\($0)") }
-            .filter { FileManager.default.fileExists(atPath: $0) }
+            .map { (directory as NSString).appendingPathComponent($0) }
+            .first { LaunchItemAttribution.belongsToAnInstalledApp(plist: $0) }
 
-        let target = try XCTUnwrap(targets.first, "no live launch daemon on this machine to test against")
-        XCTAssertTrue(LaunchItemAttribution.isReferencedByALaunchItem(target))
+        let plist = try XCTUnwrap(live, "no launch daemon owned by an installed app on this machine")
+        let target = try XCTUnwrap(LaunchItemAttribution.program(atPlist: plist))
+        XCTAssertTrue(LaunchItemAttribution.isReferencedByALiveLaunchItem(target))
+    }
+
+    // MARK: - Liveness
+
+    /// The conclusive "leave it alone": UURemote.app was installed and its
+    /// daemon running while the scanner called it residue.
+    func testProgramInsideAnInstalledAppIsLive() throws {
+        let binary = try makeExecutable("UURemote.app/Contents/MacOS/UURemoteDaemon")
+        let plist = try writePlist("com.netease.uuremote.daemon.plist", [
+            "Label": "com.netease.uuremote.daemon",
+            "Program": binary.path,
+        ])
+
+        XCTAssertEqual(
+            LaunchItemAttribution.liveness(ofPlist: plist.path),
+            .liveInsideApp(bundlePath: sandbox.appendingPathComponent("UURemote.app").path)
+        )
+        XCTAssertTrue(LaunchItemAttribution.belongsToAnInstalledApp(plist: plist.path))
+    }
+
+    func testProgramInsideARemovedAppIsOrphaned() throws {
+        let binary = try makeExecutable("Gone.app/Contents/MacOS/GoneDaemon")
+        let plist = try writePlist("com.acme.gone.plist", [
+            "Label": "com.acme.gone",
+            "Program": binary.path,
+        ])
+        // Remove the bundle but leave the daemon behind, as an uninstall does.
+        try FileManager.default.removeItem(at: sandbox.appendingPathComponent("Gone.app"))
+
+        XCTAssertEqual(LaunchItemAttribution.liveness(ofPlist: plist.path), .targetMissing)
+        XCTAssertFalse(LaunchItemAttribution.belongsToAnInstalledApp(plist: plist.path))
+    }
+
+    /// The regression this whole change exists for: a bare privileged helper
+    /// outlives its app, so its continued existence must never be read as the
+    /// job being wanted.
+    func testBareHelperIsNotTreatedAsLive() throws {
+        let binary = try makeExecutable("PrivilegedHelperTools/com.docker.vmnetd")
+        let plist = try writePlist("com.docker.vmnetd.plist", [
+            "Label": "com.docker.vmnetd",
+            "Program": binary.path,
+        ])
+
+        XCTAssertEqual(
+            LaunchItemAttribution.liveness(ofPlist: plist.path),
+            .bareHelper(program: binary.path)
+        )
+        XCTAssertFalse(
+            LaunchItemAttribution.belongsToAnInstalledApp(plist: plist.path),
+            "a helper that outlives its app must not vouch for the daemon"
+        )
     }
 }

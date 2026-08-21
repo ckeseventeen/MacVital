@@ -30,12 +30,48 @@ public enum LaunchItemAttribution {
         return (plist["ProgramArguments"] as? [String])?.first
     }
 
-    /// True when the job still points at something that exists.
+    /// What a job's target says about whether the job is still wanted.
+    public enum Liveness: Equatable, Sendable {
+        /// The program lives inside an `.app` that is still installed. This is
+        /// the one conclusive "leave it alone" answer.
+        case liveInsideApp(bundlePath: String)
+        /// The program lives inside an `.app` that is gone. Conclusively
+        /// residue.
+        case orphanedApp(bundlePath: String)
+        /// A bare executable — typically `/Library/PrivilegedHelperTools/…`.
+        ///
+        /// Its existence proves nothing. Uninstalling an app leaves its
+        /// privileged helper behind, so the daemon goes on pointing at a real
+        /// file forever. Docker, Clash Verge and Bitboo were all uninstalled on
+        /// the machine this was found on, and all three helpers were still
+        /// sitting there. Callers must fall through to attribution rather than
+        /// treat this as evidence of life.
+        case bareHelper(program: String)
+        /// The program is gone. Conclusively residue — every login wastes a
+        /// launch attempt on it.
+        case targetMissing
+    }
+
+    public static func liveness(ofPlist path: String) -> Liveness {
+        guard let program = program(atPlist: path) else { return .targetMissing }
+        guard FileManager.default.fileExists(atPath: program) else { return .targetMissing }
+
+        guard let bundle = enclosingAppBundle(of: program) else {
+            return .bareHelper(program: program)
+        }
+        return FileManager.default.fileExists(atPath: bundle)
+            ? .liveInsideApp(bundlePath: bundle)
+            : .orphanedApp(bundlePath: bundle)
+    }
+
+    /// True only when the job belongs to an app that is still installed.
     ///
-    /// This is the check that keeps a working daemon out of the residue list.
-    public static func targetExists(forPlist path: String) -> Bool {
-        guard let program = program(atPlist: path) else { return false }
-        return FileManager.default.fileExists(atPath: program)
+    /// Deliberately narrower than "the target file exists", which was the first
+    /// version and was wrong in the expensive direction: it hid three genuinely
+    /// orphaned daemons because the helpers they point at outlive their apps.
+    public static func belongsToAnInstalledApp(plist path: String) -> Bool {
+        if case .liveInsideApp = liveness(ofPlist: path) { return true }
+        return false
     }
 
     /// The `.app` bundle an executable lives inside, if it lives inside one.
@@ -71,11 +107,16 @@ public enum LaunchItemAttribution {
     /// bundle identifier, so filename attribution never places it. What does
     /// place it is the daemon that launches it — and if that daemon is on disk,
     /// removing the helper breaks it.
-    public static func isReferencedByALaunchItem(_ path: String) -> Bool {
+    /// Only references from a job that itself belongs to an installed app
+    /// count. A daemon left behind by an uninstall still points at its helper,
+    /// so counting that reference would keep both of them alive forever — each
+    /// one vouching for the other.
+    public static func isReferencedByALiveLaunchItem(_ path: String) -> Bool {
         let normalized = ProtectedPaths.normalize(path)
         for directory in launchItemDirectories {
             for child in FileWalker.children(of: URL(fileURLWithPath: directory))
             where child.pathExtension == "plist" {
+                guard belongsToAnInstalledApp(plist: child.path) else { continue }
                 guard let program = program(atPlist: child.path) else { continue }
                 let target = ProtectedPaths.normalize(program)
                 if target == normalized || target.hasPrefix(normalized + "/") { return true }
