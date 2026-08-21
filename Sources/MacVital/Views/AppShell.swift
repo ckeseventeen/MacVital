@@ -59,7 +59,7 @@ struct AppShell: View {
                 .frame(width: 1)
             content
         }
-        .background(Theme.surface)
+        .background(Theme.canvas)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
@@ -185,7 +185,7 @@ struct AppShell: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Theme.surface)
+        .background(GlassBackdrop())
     }
 }
 

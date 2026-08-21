@@ -46,6 +46,79 @@ extension View {
     }
 }
 
+/// Something for the glass to bend.
+///
+/// `glassEffect` refracts and blurs whatever is behind it. Behind every card in
+/// this app was one flat opaque colour, so the real Liquid Glass on macOS 26
+/// and the `Material` fallback below it rendered as the same thing: a rectangle
+/// a shade lighter than the background. The API was wired correctly and doing
+/// nothing visible, which reads as the app being flat rather than as glass
+/// being off.
+///
+/// So the content pane gets a gradient instead of a colour — three very soft,
+/// very low-opacity pools of the brand colours, bled off the edges. Far too
+/// faint to read as decoration on its own (that is the point; this is a tool
+/// that displays file paths and sizes, and busy backgrounds behind small text
+/// are how those become hard to read), but enough of a luminance ramp that a
+/// glass surface crossing it visibly bends something.
+///
+/// The alternative is letting the desktop through — `isOpaque = false` and a
+/// vibrancy backdrop, which is what the system apps do. That is the dramatic
+/// version, and it puts the user's wallpaper behind every path string in the
+/// app. Not the right trade here.
+struct GlassBackdrop: View {
+    var body: some View {
+        // A `ZStack` over an explicit opaque `Rectangle`, not a `Color` with
+        // overlays hung off it. The overlay form was clipped away in some
+        // layouts and left the pane painting nothing at all — and a window with
+        // no opaque background is a transparent one, so the desktop came
+        // through behind every label in the app. Being explicit about the base
+        // costs one view and removes the whole failure mode.
+        ZStack {
+            Rectangle().fill(Theme.surface)
+
+            // A luminance ramp, top to bottom. This is the part that does the
+            // work: glass reads as glass when what is behind it changes
+            // brightness across the width of a panel, and a ramp does that
+            // without introducing a colour of its own.
+            LinearGradient(
+                colors: [
+                    Color.white.opacity(0.05),
+                    Color.white.opacity(0),
+                    Color.black.opacity(0.06),
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+
+            // One pool, one hue, low. Three hues at high opacity was the first
+            // attempt: the corners went orange, blue and green and the middle
+            // went the colour of all three mixed. It read as a dirty window
+            // rather than as atmosphere.
+            pool(Theme.accent, size: 760, opacity: 0.11)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                .offset(x: 240, y: -280)
+        }
+        .compositingGroup()
+        .clipped()
+        .allowsHitTesting(false)
+    }
+
+    private func pool(_ color: Color, size: CGFloat, opacity: Double) -> some View {
+        Circle()
+            .fill(
+                RadialGradient(
+                    colors: [color.opacity(opacity), color.opacity(0)],
+                    center: .center,
+                    startRadius: 0,
+                    endRadius: size / 2
+                )
+            )
+            .frame(width: size, height: size)
+            .blur(radius: 40)
+    }
+}
+
 /// A card, restyled onto glass. Same name and shape as before so every call
 /// site picked up the new look without edits.
 struct Card<Content: View>: View {

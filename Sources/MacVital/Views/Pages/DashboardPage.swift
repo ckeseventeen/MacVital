@@ -148,6 +148,11 @@ struct DashboardPage: View {
 
             // Three columns, not two. There are five actions, and two columns
             // left the last one alone on its own row with a hole beside it.
+            //
+            // Wrapped so the system merges adjacent glass into one surface
+            // rather than compositing five overlapping sheets — the whole
+            // reason `GlassEffectContainer` exists. No-op below macOS 26.
+            GlassGroup(spacing: Theme.Metric.gridSpacing) {
             LazyVGrid(
                 columns: Array(
                     repeating: GridItem(.flexible(), spacing: Theme.Metric.gridSpacing),
@@ -203,6 +208,7 @@ struct DashboardPage: View {
                 ) {
                     environment.showQuarantine = true
                 }
+            }
             }
         }
     }
