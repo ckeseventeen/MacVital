@@ -148,6 +148,43 @@ final class ScanViewModel: ObservableObject {
         phase = .idle
     }
 
+    /// Re-run the engine over the findings already on screen.
+    ///
+    /// The process snapshot is taken once, when the scan runs, so a row locked
+    /// with `.inUse` stays locked for the life of that scan — the user quits
+    /// the app that was holding it and nothing on screen changes, which reads
+    /// as the lock being permanent when for this one reason it is not.
+    ///
+    /// Cheap on purpose: it re-evaluates existing items rather than re-walking
+    /// the disk. Same reason `UninstallViewModel.replan` exists.
+    func revalidate() async {
+        guard !findings.isEmpty else { return }
+        let rules = environment.rules
+        let quarantineRoot = environment.quarantineRoot
+        let snapshot = findings
+
+        let updated: [Finding] = await Task.detached(priority: .userInitiated) {
+            let engine = RuleEngine(
+                rules: rules,
+                processIndex: RunningProcessIndex.snapshot(),
+                selfProtectedPrefixes: [quarantineRoot]
+            )
+            return snapshot.map { finding in
+                var revised = finding
+                revised.decision = engine.evaluate(finding.item)
+                return revised
+            }
+        }.value
+
+        findings = updated
+        deniedCount = updated.filter { $0.decision.isDenied }.count
+        // A row that just became inadmissible must not stay ticked. The
+        // coordinator would skip it anyway, but the footer's "将移动 N 项"
+        // would have been counting it.
+        let selectable = Set(updated.filter(\.isSelectable).map(\.id))
+        selection.formIntersection(selectable)
+    }
+
     // MARK: - Selection
 
     func toggle(_ finding: Finding) {

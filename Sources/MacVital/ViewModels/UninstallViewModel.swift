@@ -76,6 +76,33 @@ final class UninstallViewModel: ObservableObject {
             .first { !$0.isTerminated }
     }
 
+    /// Everything that would have to close for the plan to go through.
+    ///
+    /// Not just the app itself. An app's own helpers hold its files too — a
+    /// Finder extension, an updater, a login-item daemon — and each carries its
+    /// own bundle identifier, so quitting the main app left those rows locked
+    /// and the reason unexplained. The engine now names whatever it found, and
+    /// this collects them.
+    var blockingTargets: [ProcessTerminator.Target] {
+        var targets: [ProcessTerminator.Target] = []
+        if let app = selectedApp, runningInstance != nil {
+            targets.append(.application(bundleIdentifier: app.bundleIdentifier, name: app.name))
+        }
+        for row in inUseRows {
+            guard let target = ProcessTerminator.target(for: row.decision) else { continue }
+            guard !targets.contains(target) else { continue }
+            targets.append(target)
+        }
+        return targets
+    }
+
+    /// True when a graceful quit has been tried and something is still up, so
+    /// the UI may offer the harsher option. Never true before that.
+    @Published private(set) var quitWasRefused = false
+    /// Targets a graceful quit could not close, named so the confirmation can
+    /// say what is about to be killed.
+    @Published private(set) var stubbornTargets: [String] = []
+
     var needsHelper: Bool {
         rows.contains { selection.contains($0.id) && $0.decision.admission == .allowWithPrivilege }
             && environment.helperStatus != .enabled
@@ -115,25 +142,60 @@ final class UninstallViewModel: ObservableObject {
         await plan(for: app, preservingSelection: true)
     }
 
-    /// Ask the app being uninstalled to quit, then re-evaluate.
+    /// Ask everything holding the app's files to quit, then re-evaluate.
     ///
     /// `terminate()` rather than `forceTerminate()`: the app gets to run its
     /// normal quit path and prompt about unsaved work. Killing an app outright
-    /// to speed up its own uninstall would be a poor trade.
+    /// to speed up its own uninstall would be a poor trade — that is what
+    /// `forceQuitBlockersAndReplan` is for, and only once this has failed.
     @discardableResult
     func quitRunningInstanceAndReplan() async -> Bool {
-        guard let running = runningInstance else { return true }
-        running.terminate()
+        await close(force: false)
+    }
 
-        // Poll rather than sleep a fixed amount: quitting is usually instant
-        // but an app with a "save changes?" sheet can take as long as the user
-        // does, and we should not declare it still running because of that.
-        for _ in 0..<20 {
-            try? await Task.sleep(for: .milliseconds(150))
-            if running.isTerminated { break }
+    /// Kill what would not go quietly.
+    ///
+    /// Only ever called from a confirmation that names the processes, because
+    /// this is the one action in the app that can lose work the user has not
+    /// saved.
+    @discardableResult
+    func forceQuitBlockersAndReplan() async -> Bool {
+        await close(force: true)
+    }
+
+    private func close(force: Bool) async -> Bool {
+        let targets = blockingTargets
+        guard !targets.isEmpty else {
+            quitWasRefused = false
+            stubbornTargets = []
+            return true
         }
+
+        var refused: [String] = []
+        for target in targets {
+            let outcome = force
+                ? await ProcessTerminator.forceQuit(target)
+                : await ProcessTerminator.quit(target)
+            switch outcome {
+            case .closed:
+                continue
+            case .stillRunning:
+                refused.append(target.name)
+            case .notPermitted:
+                // Root-owned. The main process is not root by design, and the
+                // privileged helper deliberately exposes no way to signal a
+                // process — a root-level "kill anything" verb is not a surface
+                // worth having for this.
+                refused.append("\(target.name)（需要管理员权限，无法结束）")
+            }
+        }
+
+        stubbornTargets = refused
+        // Only a *graceful* refusal justifies offering the harsher button. If
+        // force already failed, there is nothing further to escalate to.
+        quitWasRefused = !force && !refused.isEmpty
         await replan()
-        return running.isTerminated
+        return refused.isEmpty
     }
 
     /// Quit the app and, if it actually went away, uninstall it.
@@ -150,7 +212,21 @@ final class UninstallViewModel: ObservableObject {
     func quitAndUninstall() async {
         let quit = await quitRunningInstanceAndReplan()
         guard quit else {
-            summary = "「\(selectedApp?.name ?? "该 App")」没有退出，卸载已中止。请手动退出后重试。"
+            let names = stubbornTargets.joined(separator: "、")
+            summary = "\(names.isEmpty ? "该 App" : names) 没有退出，卸载已中止。"
+                + (quitWasRefused ? "可以用「强制结束」直接结束它们，但未保存的内容会丢失。" : "请手动退出后重试。")
+            leftovers = rows
+            return
+        }
+        await uninstall()
+    }
+
+    /// Force-quit, then uninstall. Reached only from a confirmation.
+    func forceQuitAndUninstall() async {
+        let quit = await forceQuitBlockersAndReplan()
+        guard quit else {
+            let names = stubbornTargets.joined(separator: "、")
+            summary = "仍有进程无法结束：\(names)。卸载已中止。"
             leftovers = rows
             return
         }

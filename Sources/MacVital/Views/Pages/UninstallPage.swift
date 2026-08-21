@@ -8,6 +8,10 @@ struct UninstallPage: View {
     @EnvironmentObject private var environment: AppEnvironment
     @StateObject private var model: UninstallViewModel
     @State private var confirming = false
+    /// Raised only after a graceful quit has visibly failed. Force-quitting is
+    /// the one action here that can lose unsaved work, so it never happens as a
+    /// side effect of the ordinary button.
+    @State private var confirmingForceQuit = false
 
     /// The environment is passed explicitly rather than read from
     /// `@EnvironmentObject`: the view model must be constructed at `init` time
@@ -78,6 +82,24 @@ struct UninstallPage: View {
             } else {
                 Text("将移动 \(model.selection.count) 项，共 \(ByteFormat.string(model.selectedBytes))。文件先进入隔离区，随时可以还原。")
             }
+        }
+        // Its own confirmation, and deliberately not reachable from the one
+        // above: force-quitting is the only action in this app that can destroy
+        // work the user has not saved, so it names what it is about to kill and
+        // asks separately.
+        .confirmationDialog(
+            "强制结束并卸载？",
+            isPresented: $confirmingForceQuit,
+            titleVisibility: .visible
+        ) {
+            Button("强制结束并卸载", role: .destructive) {
+                Task { await model.forceQuitAndUninstall() }
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("将强制结束：\(model.stubbornTargets.joined(separator: "、"))。\n\n"
+                 + "强制结束不给程序保存的机会，未保存的内容会直接丢失，正在写入的文件也可能损坏。"
+                 + "只有在它已经没有响应、或你确定没有未保存内容时才这么做。")
         }
     }
 

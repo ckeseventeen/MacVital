@@ -7,6 +7,9 @@ import MacVitalKit
 /// their own labelled block, so it is always clear which one is speaking.
 struct ItemDetailPane: View {
     let finding: Finding?
+    /// Called after something holding this item was closed, so the caller can
+    /// re-run the engine and unlock the row.
+    var onOccupierClosed: () async -> Void = {}
 
     var body: some View {
         Group {
@@ -86,6 +89,15 @@ struct ItemDetailPane: View {
                 .font(.caption2.monospaced())
                 .foregroundStyle(.tertiary)
                 .textSelection(.enabled)
+
+            // `.inUse` is the only verdict here the user can clear, and saying
+            // so without offering to do it left them to find the program, quit
+            // it, come back and rescan. The uninstall page has had this since
+            // the process terminator was written; a build directory a compiler
+            // is holding is the same problem.
+            if let target = ProcessTerminator.target(for: finding.decision) {
+                OccupierActions(target: target, onClosed: onOccupierClosed)
+            }
         }
     }
 
@@ -190,5 +202,94 @@ struct SectionLabel: View {
             .font(.caption.weight(.semibold))
             .foregroundStyle(.secondary)
             .textCase(.uppercase)
+    }
+}
+
+/// Closing whatever is holding a finding open.
+///
+/// Two steps, never one. The graceful quit is the button; force quit only
+/// appears once that has visibly failed, and it asks first — it is the one
+/// action in this app that can destroy work the user has not saved, which is
+/// the exact opposite of what quarantine exists to guarantee.
+private struct OccupierActions: View {
+    let target: ProcessTerminator.Target
+    let onClosed: () async -> Void
+
+    @State private var isWorking = false
+    @State private var refused = false
+    @State private var notPermitted = false
+    @State private var confirmingForce = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Button {
+                    Task { await close(force: false) }
+                } label: {
+                    Label("退出「\(target.name)」", systemImage: "stop.circle")
+                }
+                .controlSize(.small)
+                .disabled(isWorking)
+
+                if refused {
+                    Button(role: .destructive) {
+                        confirmingForce = true
+                    } label: {
+                        Label("强制结束", systemImage: "xmark.octagon")
+                    }
+                    .controlSize(.small)
+                    .disabled(isWorking)
+                }
+
+                if isWorking {
+                    ProgressView().controlSize(.small)
+                }
+            }
+
+            if notPermitted {
+                Text("这个进程属于系统或其他用户，MacVital 不以 root 运行，无法结束它。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else if refused {
+                Text("它没有响应退出请求，可能正在等待你保存内容。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .confirmationDialog("强制结束「\(target.name)」？", isPresented: $confirmingForce, titleVisibility: .visible) {
+            Button("强制结束", role: .destructive) {
+                Task { await close(force: true) }
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("强制结束不给程序保存的机会，未保存的内容会直接丢失，正在写入的文件也可能损坏。"
+                 + "只有在它已经没有响应、或你确定没有未保存内容时才这么做。")
+        }
+    }
+
+    private func close(force: Bool) async {
+        isWorking = true
+        defer { isWorking = false }
+
+        let outcome = force
+            ? await ProcessTerminator.forceQuit(target)
+            : await ProcessTerminator.quit(target)
+
+        switch outcome {
+        case .closed:
+            refused = false
+            notPermitted = false
+            await onClosed()
+        case .stillRunning:
+            // Only a graceful refusal earns the harsher button. If force
+            // already failed there is nothing further to escalate to.
+            refused = !force
+            notPermitted = false
+        case .notPermitted:
+            refused = false
+            notPermitted = true
+        }
     }
 }

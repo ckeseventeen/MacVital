@@ -28,7 +28,11 @@ struct FindingsList: View {
             .alternatingRowBackgrounds()
             .frame(minWidth: 420)
 
-            ItemDetailPane(finding: model.selectedFinding)
+            ItemDetailPane(finding: model.selectedFinding) {
+                // Whatever was holding it is gone; re-derive the verdicts so
+                // the row unlocks instead of staying stale until a full rescan.
+                await model.revalidate()
+            }
                 .frame(minWidth: 280, idealWidth: 320, maxWidth: 420)
         }
     }
