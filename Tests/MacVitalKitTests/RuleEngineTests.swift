@@ -320,6 +320,12 @@ final class RuleEngineTests: XCTestCase {
     func testPrivilegedRulesLiveOnlyInApprovedSystemRoots() {
         let approvedRoots = [
             "/Library/",
+            // App bundles an installer wrote as root. Removing the app is the
+            // point of the uninstaller, and a `root:wheel` bundle has no other
+            // route — `ProtectedPaths` still hard-denies Safari and Utilities,
+            // and the two-component carve-out for `/Applications/Foo.app` was
+            // written for exactly this shape.
+            "/Applications/",
             // Installer receipts. Reachable only through the single named
             // exemption in `ProtectedPaths.isInstallerReceipt`.
             "/private/var/db/receipts/",

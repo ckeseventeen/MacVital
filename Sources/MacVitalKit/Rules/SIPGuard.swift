@@ -79,12 +79,33 @@ public enum SIPGuard {
         /// An ACL denies deletion of this path.
         case deleteDenyACL(path: String)
         /// This directory has contents but is not writable, so nothing inside
-        /// it can be unlinked.
+        /// it can be unlinked. Owned by *this* user — a `chmod u+w` fixes it,
+        /// and it is usually an app protecting itself on purpose.
         case unwritableDirectory(path: String)
+        /// Same mechanical problem, entirely different cause and cure: the
+        /// directory belongs to another user, in practice always `root`,
+        /// because a `.pkg` installer put it there.
+        ///
+        /// Worth separating because the advice is opposite. `chmod u+w` on a
+        /// root-owned bundle is wrong (it needs `sudo`, and it is not the
+        /// fix); root, on the other hand, removes it without difficulty — so
+        /// this is a *privilege* problem, not a permanent one, and the
+        /// privileged helper is exactly the answer to it.
+        case foreignOwner(path: String, uid: uid_t)
 
         public var path: String {
             switch self {
             case .deleteDenyACL(let path), .unwritableDirectory(let path): return path
+            case .foreignOwner(let path, _): return path
+            }
+        }
+
+        /// Whether running as root would get past this. An ACL that denies
+        /// delete stops `sudo rm` too; an ownership problem does not.
+        public var rootCouldRemoveIt: Bool {
+            switch self {
+            case .foreignOwner: return true
+            case .deleteDenyACL, .unwritableDirectory: return false
             }
         }
     }
@@ -147,7 +168,17 @@ public enum SIPGuard {
         guard access(path, W_OK) != 0 else { return nil }
 
         let contents = (try? FileManager.default.contentsOfDirectory(atPath: path)) ?? []
-        return contents.isEmpty ? nil : .unwritableDirectory(path: path)
+        guard !contents.isEmpty else { return nil }
+
+        // Who owns it decides what the user should be told. An installer that
+        // ran as root leaves `root:wheel` directories behind — `/Applications`
+        // is full of them — and sending the user to `chmod u+w` for those is
+        // advice that cannot work.
+        var info = stat()
+        if lstat(path, &info) == 0, info.st_uid != getuid() {
+            return .foreignOwner(path: path, uid: info.st_uid)
+        }
+        return .unwritableDirectory(path: path)
     }
 
     /// True when an ACL on the entry, or anywhere beneath it, denies deletion.

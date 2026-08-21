@@ -113,7 +113,20 @@ public struct RuleEngine: Sendable {
         //     by hand. Refusing up front is the only version of this that does
         //     not strand data.
         if let blocker = SIPGuard.removalBlocker(at: resolved) {
-            return .deny(rule.id, .contentsNotRemovable, Self.explain(blocker))
+            // Root-owned content is the one blocker root gets past, so a rule
+            // that already routes through the helper is not blocked by it.
+            //
+            // `.pkg` installers leave `root:wheel` trees behind — the app
+            // bundle in `/Applications` most visibly — and treating those the
+            // same as a `chmod`-able self-protection meant the headline
+            // feature could not remove them at all, on any build, while
+            // telling the user to run a `chmod` that would not have helped.
+            let rootHandlesIt = blocker.rootCouldRemoveIt
+                && rule.requiresPrivilege
+                && privilegedRemovalPossible
+            if !rootHandlesIt {
+                return .deny(rule.id, .contentsNotRemovable, Self.explain(blocker, privileged: rule.requiresPrivilege))
+            }
         }
 
         // 6. Never touch ourselves — the quarantine store above all.
@@ -216,7 +229,7 @@ public struct RuleEngine: Sendable {
     /// Names the exact path that blocks removal. "无法删除" without saying which
     /// piece is useless — the user's only recourse is to find it themselves,
     /// which is what happened before this check existed.
-    private static func explain(_ blocker: SIPGuard.RemovalBlocker) -> String {
+    private static func explain(_ blocker: SIPGuard.RemovalBlocker, privileged: Bool) -> String {
         let path = PathRedaction.abbreviate(blocker.path)
         switch blocker {
         case .deleteDenyACL:
@@ -226,6 +239,17 @@ public struct RuleEngine: Sendable {
             return "\(path) 没有写权限，里面的内容无法移除，整棵目录会卡在半路。"
                  + "这通常是应用有意的自我保护（例如名为 000RefuseWalletDBDelete 的目录），"
                  + "也可能是系统自带的只读资源。如确需处理，请先执行 chmod u+w。"
+        case .foreignOwner(_, let uid):
+            // Says who owns it and what actually works. The old text sent the
+            // user to `chmod u+w` here, which on a root-owned bundle needs
+            // `sudo` and is not the fix anyway.
+            let owner = uid == 0 ? "root（管理员）" : "另一个用户（uid \(uid)）"
+            let base = "\(path) 属于 \(owner)，是安装器以管理员身份装上去的，当前用户动不了它。"
+            return privileged
+                ? base + "移除它需要特权助手，而当前构建是自签名的，用不了助手"
+                       + "（需要 Developer ID 证书签名的构建）。也可以在访达里把它拖进废纸篓，"
+                       + "系统会向你要一次密码。"
+                : base + "在访达里把它拖进废纸篓即可，系统会向你要一次密码。"
         }
     }
 

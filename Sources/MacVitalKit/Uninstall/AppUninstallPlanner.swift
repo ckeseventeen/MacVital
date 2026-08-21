@@ -81,8 +81,7 @@ public struct AppUninstallPlanner: Sendable {
 
         // 1. The bundle itself.
         let bundlePath = ProtectedPaths.normalize(app.path)
-        add(bundlePath, kind: .bundle,
-            ruleID: bundlePath.hasPrefix("\(home)/") ? "uninstall.userAppBundle" : "uninstall.appBundle")
+        add(bundlePath, kind: .bundle, ruleID: Self.bundleRuleID(for: bundlePath, home: home))
 
         // 2. Everything keyed on the bundle identifier.
         //
@@ -170,6 +169,23 @@ public struct AppUninstallPlanner: Sendable {
         addUUIDContainers(identifier: id, into: &candidates, seen: &seen, app: app)
 
         return candidates.sorted { $0.item.sizeBytes > $1.item.sizeBytes }
+    }
+
+    /// Which of the three bundle rules covers this one.
+    ///
+    /// Ownership, not location, decides whether root is needed: a bundle a
+    /// `.pkg` installer wrote is `root:wheel` and cannot be moved by the user
+    /// at all, while the same path filled by dragging from a disk image can.
+    /// Filing a root-owned bundle under the unprivileged rule left it with no
+    /// route to removal on any build.
+    static func bundleRuleID(for path: String, home: String) -> String {
+        if path.hasPrefix("\(home)/") { return "uninstall.userAppBundle" }
+
+        var info = stat()
+        if lstat(path, &info) == 0, info.st_uid != getuid() {
+            return "uninstall.rootAppBundle"
+        }
+        return "uninstall.appBundle"
     }
 
     // MARK: - Crash reports

@@ -28,6 +28,29 @@ public enum RuleCatalog {
             rebuildable: false,
             autoSelectable: false
         ),
+        // The same bundle, when a `.pkg` installer put it there as root.
+        //
+        // Two rules for one pattern is deliberate: whether removing an app
+        // needs administrator rights is a property of the *instance*, not of
+        // the shape of its path. Most apps are dragged from a disk image and
+        // belong to the user; installers leave `root:wheel` ones, and those
+        // are unremovable without the helper — `/Applications/UURemote.app`
+        // was refused outright, with advice to run a `chmod` that could not
+        // have worked. `AppUninstallPlanner` reads the owner and files the
+        // item under whichever of the two applies.
+        //
+        // The pattern reaches no further than the rule above it, and
+        // `ProtectedPaths` still hard-denies Safari and Utilities.
+        CleanupRule(
+            id: "uninstall.rootAppBundle",
+            category: .appUninstall,
+            pattern: "/Applications/*.app",
+            kind: "应用程序",
+            rationale: "由安装器以管理员身份安装的应用程序本体。移除需要管理员授权，之后需要重新安装才能再次使用。",
+            rebuildable: false,
+            autoSelectable: false,
+            requiresPrivilege: true
+        ),
         CleanupRule(
             id: "uninstall.userAppBundle",
             category: .appUninstall,
