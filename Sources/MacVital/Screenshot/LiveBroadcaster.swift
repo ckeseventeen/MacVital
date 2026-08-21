@@ -1,5 +1,6 @@
 import AppKit
 import CoreImage
+import MacVitalKit
 import Network
 import ScreenCaptureKit
 
@@ -71,7 +72,7 @@ final class LiveBroadcaster: NSObject, ObservableObject {
     func start(excluding ownWindow: NSWindow?) async {
         guard !isBroadcasting else { return }
         do {
-            sessionToken = Self.makeToken()
+            sessionToken = BroadcastRoute.makeToken()
             try startServer()
             try await startCapture(excluding: ownWindow)
             addresses = Self.localAddresses()
@@ -142,37 +143,15 @@ final class LiveBroadcaster: NSObject, ObservableObject {
             Task { @MainActor in
                 guard let self else { return }
                 let request = data.flatMap { String(data: $0, encoding: .utf8) } ?? ""
-                switch self.route(request) {
+                // Routing lives in the kit so it can be tested — it is the
+                // only access control in the app. See `BroadcastRoute`.
+                switch BroadcastRoute.parse(request: request, token: self.sessionToken) {
                 case .page:   self.servePage(on: connection)
                 case .stream: self.beginStream(on: connection)
                 case .reject: self.serveNotFound(on: connection)
                 }
             }
         }
-    }
-
-    private enum Route {
-        case page
-        case stream
-        case reject
-    }
-
-    /// `GET /<token>` and `GET /<token>/stream`, and nothing else. A request
-    /// carrying the wrong token gets a plain 404 — the same answer a stopped
-    /// broadcast gives, so probing cannot tell the two apart.
-    private func route(_ request: String) -> Route {
-        guard !sessionToken.isEmpty else { return .reject }
-        guard let line = request.split(separator: "\r\n", maxSplits: 1).first else { return .reject }
-        let fields = line.split(separator: " ")
-        guard fields.count >= 2, fields[0] == "GET" else { return .reject }
-
-        var path = String(fields[1])
-        if let query = path.firstIndex(of: "?") { path = String(path[path.startIndex..<query]) }
-        while path.count > 1 && path.hasSuffix("/") { path.removeLast() }
-
-        if path == "/\(sessionToken)" { return .page }
-        if path == "/\(sessionToken)/stream" { return .stream }
-        return .reject
     }
 
     private func serveNotFound(on connection: NWConnection) {
@@ -182,19 +161,6 @@ final class LiveBroadcaster: NSObject, ObservableObject {
         })
     }
 
-    /// Eight characters from a 31-letter alphabet — about 40 bits.
-    ///
-    /// Sized against the actual threat and the actual use. The point of this
-    /// feature is that someone reads a URL off a projector and types it on
-    /// their phone, so a 32-character hex string would defeat the feature to
-    /// defend it. 40 bits is far past what an attacker can walk through
-    /// against a broadcast that lasts an hour and whose token changes every
-    /// time it starts. `I`, `L`, `O` and `U` are left out: they are the ones
-    /// people mistype off a screen.
-    private static func makeToken() -> String {
-        let alphabet = Array("0123456789abcdefghjkmnpqrstvwxyz")
-        return String((0..<8).map { _ in alphabet.randomElement()! })
-    }
 
     private func servePage(on connection: NWConnection) {
         let html = Self.page(token: sessionToken)

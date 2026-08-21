@@ -122,6 +122,24 @@ public struct RunningProcessIndex: Sendable {
         return Array(pids.prefix(count)).filter { $0 > 0 }
     }
 
+    /// Whether `pid` is still running the executable it was recorded with.
+    ///
+    /// A PID is not a stable handle. A verdict naming one is produced during a
+    /// scan and may be acted on minutes later, and macOS hands PIDs out again
+    /// once they are freed — so by then the number can belong to something
+    /// else entirely. Anything about to *signal* a recorded PID has to ask this
+    /// first; the difference between "the compiler you wanted to stop" and
+    /// "whatever happened to start next" is invisible from the number alone.
+    ///
+    /// Lives here rather than beside the code that sends the signal so it can
+    /// be tested: the app target deliberately has no test bundle, because
+    /// building one produces a second, unsigned `MacVital.app` and macOS may
+    /// resolve the bundle identifier to *that* when checking a TCC requirement.
+    public static func isRunning(pid: pid_t, executablePath: String) -> Bool {
+        guard let current = currentExecutablePath(for: pid) else { return false }
+        return current == ProtectedPaths.normalize(executablePath)
+    }
+
     /// The executable a live PID is running, normalised the same way entries
     /// are. `nil` when the process is gone or belongs to someone else.
     ///

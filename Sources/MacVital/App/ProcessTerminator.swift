@@ -185,9 +185,10 @@ enum ProcessTerminator {
     /// A mismatch is reported to the caller as `.closed`, because it is: the
     /// process that was holding the file is gone. What must not happen is
     /// signalling its replacement.
+    /// Delegates to the kit, which is where it can be tested — this target has
+    /// no test bundle by design (see `RunningProcessIndex.isRunning`).
     private static func isStillTheRecordedProcess(_ pid: pid_t, _ executablePath: String) -> Bool {
-        guard let current = RunningProcessIndex.currentExecutablePath(for: pid) else { return false }
-        return current == ProtectedPaths.normalize(executablePath)
+        RunningProcessIndex.isRunning(pid: pid, executablePath: executablePath)
     }
 
     private static func instances(of bundleIdentifier: String) -> [NSRunningApplication] {
