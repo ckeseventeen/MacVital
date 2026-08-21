@@ -88,11 +88,25 @@ final class QuarantineViewModel: ObservableObject {
         }
     }
 
+    /// Reports what did not go away.
+    ///
+    /// Every failure used to be swallowed by `try?`, so "全部删除" could remove
+    /// nothing at all and say nothing about it — while the single-row 立即删除
+    /// beside it surfaced the very same error.
     func purgeAll() async {
+        var failures: [String] = []
         for record in records {
-            try? await environment.coordinator.purge(record)
+            do {
+                try await environment.coordinator.purge(record)
+            } catch {
+                failures.append("\(record.displayName)：\(error.localizedDescription)")
+            }
         }
         await reload()
+        if !failures.isEmpty {
+            errorMessage = "有 \(failures.count) 项没有删除成功：\n"
+                + failures.prefix(3).joined(separator: "\n")
+        }
     }
 
     func revealInFinder(_ record: QuarantineRecord) {

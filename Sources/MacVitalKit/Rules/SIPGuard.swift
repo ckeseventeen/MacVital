@@ -58,9 +58,20 @@ public enum SIPGuard {
 
     /// Whether the current process can unlink the entry from its parent —
     /// which needs write permission on the *parent*, not the entry.
+    ///
+    /// The entry's own mode is deliberately not consulted, and it used to be:
+    /// `rename(2)` and `unlink(2)` both ask the parent directory for
+    /// permission, so a `chmod 444` file in a writable directory moves to
+    /// quarantine perfectly well. Testing it meant a read-only download was
+    /// reported as needing root — and root would have refused it too, because
+    /// the helper only accepts paths a `requiresPrivilege` rule describes.
+    ///
+    /// The case this check is *not* responsible for is a non-empty directory
+    /// that cannot give up its contents; `removalBlocker` answers that one, and
+    /// it runs earlier.
     public static func currentUserCanRemove(_ path: String) -> Bool {
         let parent = (path as NSString).deletingLastPathComponent
-        return access(parent, W_OK) == 0 && access(path, W_OK) == 0
+        return access(parent, W_OK) == 0
     }
 
     /// Why a tree cannot be removed in full, if it cannot.

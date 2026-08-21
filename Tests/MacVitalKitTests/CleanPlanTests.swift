@@ -69,7 +69,7 @@ final class CleanPlanTests: XCTestCase {
     func testLargeAndDuplicateFilesAlwaysRequireManualSelection() {
         for category in [ScanCategory.largeFiles, .duplicateFiles] {
             let f = finding(
-                ruleID: category == .largeFiles ? "file.large" : "file.duplicate",
+                ruleID: category == .largeFiles ? "file.large.downloads" : "file.duplicate.downloads",
                 recommendation: .safeToRemove,
                 confidence: 1.0,
                 category: category

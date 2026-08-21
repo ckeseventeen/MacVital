@@ -72,12 +72,15 @@ public struct DuplicateFileScanner: Scanner {
             }
             let keeper = ordered[0]
             for duplicate in ordered.dropFirst() {
+                // Resolved per file, not per group: two copies of the same
+                // bytes can sit under different roots.
+                guard let rule = RuleCatalog.userFileRule(for: duplicate.path, category: category) else { continue }
                 let attributes = FileWalker.attributes(of: duplicate)
                 items.append(ScanItem(
                     path: ProtectedPaths.normalize(duplicate.path),
                     displayName: duplicate.lastPathComponent,
                     category: .duplicateFiles,
-                    ruleID: "file.duplicate",
+                    ruleID: rule.id,
                     kindHint: "副本，保留 \(PathRedaction.abbreviate(keeper.path))",
                     // Allocated size here on purpose: this is what the disk
                     // actually hands back, which is the number the summary adds
@@ -102,7 +105,7 @@ public struct DuplicateFileScanner: Scanner {
 
     // MARK: - Candidates
 
-    private struct Candidate {
+    fileprivate struct Candidate {
         let url: URL
         let size: Int64
     }
@@ -117,38 +120,75 @@ public struct DuplicateFileScanner: Scanner {
     /// is past EOF, so the read came back empty and the "head+tail" digest
     /// silently degraded to head-only — throwing away the cheap filter that
     /// keeps the full SHA-256 pass small.
-    private static let sizeKeys: [URLResourceKey] = [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey]
+    fileprivate static let sizeKeys: [URLResourceKey] = [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey]
 
     private func collectCandidates(context: ScanContext) async throws -> [Candidate] {
         var candidates: [Candidate] = []
-        var seen = 0
 
         for rootPath in context.options.userFileRoots {
             let root = URL(fileURLWithPath: rootPath)
             guard FileWalker.exists(root) else { continue }
-            guard let enumerator = FileManager.default.enumerator(
-                at: root,
-                includingPropertiesForKeys: Self.sizeKeys,
-                options: [.skipsPackageDescendants, .skipsHiddenFiles],
-                errorHandler: { _, _ in true }
-            ) else { continue }
+            // Default-deny applied to configuration: a root no rule describes
+            // cannot yield a removable file, so it is not walked.
+            guard RuleCatalog.userFileRule(for: rootPath, category: category) != nil else {
+                Log.scan.debug("no rule covers \(Log.path(rootPath), privacy: .public); not scanning it")
+                continue
+            }
+            guard let cursor = Cursor(root: root, minimumSize: minimumSize) else { continue }
 
-            for case let url as URL in enumerator {
-                if Task.isCancelled { throw CancellationError() }
-                // This walk is the longest uninterrupted stretch of the whole
-                // scan. Yielding periodically keeps the other scanners in the
-                // group moving and lets cancellation land promptly.
-                seen += 1
-                if seen % 2_000 == 0 { await Task.yield() }
-
-                guard let values = try? url.resourceValues(forKeys: Set(Self.sizeKeys)) else { continue }
-                guard values.isRegularFile == true, values.isSymbolicLink != true else { continue }
-                let size = Int64(values.fileSize ?? 0)
-                guard size >= minimumSize else { continue }
-                candidates.append(Candidate(url: url, size: size))
+            // This walk is the longest uninterrupted stretch of the whole scan.
+            // Yielding between batches keeps the other scanners in the group
+            // moving and lets cancellation land promptly.
+            //
+            // The walk itself stays synchronous inside `Cursor`:
+            // `FileManager.DirectoryEnumerator`'s iterator is `noasync`, and
+            // iterating it directly in this function is an error under the
+            // Swift 6 language mode.
+            while let batch = try cursor.nextBatch() {
+                candidates += batch
+                await Task.yield()
             }
         }
         return candidates
+    }
+
+    /// Walks one root in bounded chunks, synchronously.
+    private final class Cursor {
+        private let enumerator: FileManager.DirectoryEnumerator
+        private let minimumSize: Int64
+        private let batchSize = 2_000
+
+        init?(root: URL, minimumSize: Int64) {
+            guard let enumerator = FileManager.default.enumerator(
+                at: root,
+                includingPropertiesForKeys: DuplicateFileScanner.sizeKeys,
+                options: [.skipsPackageDescendants, .skipsHiddenFiles],
+                errorHandler: { _, _ in true }
+            ) else { return nil }
+            self.enumerator = enumerator
+            self.minimumSize = minimumSize
+        }
+
+        /// The next chunk, or nil when the walk is finished.
+        func nextBatch() throws -> [Candidate]? {
+            var batch: [Candidate] = []
+            var visited = 0
+
+            while visited < batchSize {
+                if Task.isCancelled { throw CancellationError() }
+                guard let url = enumerator.nextObject() as? URL else {
+                    return batch.isEmpty ? nil : batch
+                }
+                visited += 1
+
+                guard let values = try? url.resourceValues(forKeys: Set(DuplicateFileScanner.sizeKeys)) else { continue }
+                guard values.isRegularFile == true, values.isSymbolicLink != true else { continue }
+                let size = Int64(values.fileSize ?? 0)
+                guard size >= minimumSize else { continue }
+                batch.append(Candidate(url: url, size: size))
+            }
+            return batch
+        }
     }
 
     private static func creationDate(of url: URL) -> Date? {

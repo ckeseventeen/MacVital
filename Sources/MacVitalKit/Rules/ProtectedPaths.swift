@@ -166,6 +166,18 @@ public struct ProtectedPaths: Sendable {
         for suffix in protectedBundleSuffixes where name.hasSuffix(suffix) {
             return .protectedUserData
         }
+        // The global preference domain, in both its forms. This is not one
+        // app's settings: it holds the system language and locale, the
+        // interface style, measurement units and the keyboard configuration,
+        // and losing it resets all of them at once.
+        //
+        // It sits in `~/Library/Preferences` next to per-app plists and its
+        // name is not `com.apple.`-prefixed, so the residue scanner's name
+        // filter did not catch it — a machine-wide audit found
+        // `.GlobalPreferences.plist` and its `ByHost` twin being offered for
+        // removal as "归属的 App 已不在本机". The scanner no longer proposes
+        // them; this is the layer that guarantees nothing else can either.
+        if name.hasPrefix(".globalpreferences") { return .protectedUserData }
         // /usr/local and /opt/homebrew are the two writable exceptions inside
         // otherwise-protected prefixes; they are handled by not listing them.
         return nil

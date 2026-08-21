@@ -260,18 +260,57 @@ final class RuleEngineTests: XCTestCase {
 
     /// Only rules whose artifacts are unambiguously build output may reach
     /// into Documents / Desktop. If this list grows, it should be deliberate.
+    ///
+    /// The user-file rules are the second, deliberate group: they exist to let
+    /// the user pick their own large and duplicate files, they are never
+    /// pre-ticked, and since they carry the opt-in they are the ones whose
+    /// pattern has to be readable. One per named root, rather than the single
+    /// `~/**` this used to allow.
     func testUserDataOptInIsNarrow() {
         let optedIn = Set(RuleCatalog.all.filter(\.allowedInUserData).map(\.id))
-        XCTAssertEqual(optedIn, [
+        let buildOutput: Set<String> = [
             "dev.project.nodeModules",
             "dev.project.pods",
             "dev.project.swiftBuild",
             "dev.project.cargoTarget",
             "dev.project.pythonVenv",
             "dev.project.nextCache",
-            "file.large",
-            "file.duplicate",
-        ])
+        ]
+        let userFiles = Set(RuleCatalog.userFileRoots.flatMap {
+            ["file.large.\($0.suffix)", "file.duplicate.\($0.suffix)"]
+        })
+        XCTAssertEqual(optedIn, buildOutput.union(userFiles))
+    }
+
+    /// The opt-in bypasses the Documents / Desktop ban, so the pattern is the
+    /// only thing left bounding these rules. `~/**` bounded nothing: an item
+    /// emitted with a user-file rule id and a `~/Library` path would have been
+    /// admitted outright.
+    func testUserFileRulesNameOneRootEach() {
+        for rule in RuleCatalog.all where rule.allowedInUserData && rule.id.hasPrefix("file.") {
+            XCTAssertFalse(rule.pattern.raw == "~/**", "\(rule.id) is unbounded")
+            XCTAssertTrue(
+                RuleCatalog.userFileRoots.contains { rule.pattern.raw == "~/\($0.relativePath)/**" },
+                "\(rule.id) has pattern \(rule.pattern.raw), which names no declared root"
+            )
+            XCTAssertFalse(rule.autoSelectable, "\(rule.id) must never be pre-ticked")
+        }
+    }
+
+    /// Nothing opted into user data may reach `~/Library`, whatever its root.
+    func testUserDataOptInNeverReachesTheLibrary() {
+        let engine = RuleEngine(rules: RuleIndex(), processIndex: RunningProcessIndex(entries: []))
+        for rule in RuleCatalog.all where rule.allowedInUserData {
+            let item = ScanItem(
+                path: "\(PathRedaction.home)/Library/Preferences/.GlobalPreferences.plist",
+                category: rule.category,
+                ruleID: rule.id,
+                kindHint: "测试",
+                sizeBytes: 7,
+                isDirectory: false
+            )
+            XCTAssertTrue(engine.evaluate(item).isDenied, "\(rule.id) admitted a ~/Library path")
+        }
     }
 
     /// Every rule that asks for root must live in one of a small, enumerated
@@ -312,15 +351,21 @@ final class RuleEngineTests: XCTestCase {
 extension RuleEngineTests {
 
     /// Patterns whose breadth is deliberate, each for a stated reason.
-    private static let approvedBroadPatterns: Set<String> = [
-        // The user-file scanners produce paths anywhere the user keeps files;
-        // narrowing these would mean enumerating the whole home directory.
-        // Both are `autoSelectable: false` and their categories require
-        // item-by-item approval.
-        "~/**",
-        // Empty folders, restricted to Library and never auto-selected.
-        "~/Library/**",
-    ]
+    ///
+    /// This was two hand-written entries — `~/**` for the user-file rules and
+    /// `~/Library/**` for the empty-folder rule — on the grounds that narrowing
+    /// them would mean enumerating the roots. Enumerating the roots turned out
+    /// to be the right answer: both are now one rule per named directory,
+    /// generated from the list the matching scanner walks, so the breadth is
+    /// bounded by something a reader can see.
+    ///
+    /// Derived from the catalog rather than restated, so a root added to a
+    /// sweep does not need this list edited too — while any *other* shallow
+    /// `**` still has to answer for itself below.
+    private static var approvedBroadPatterns: Set<String> {
+        Set(RuleCatalog.userFileRoots.map { "~/\($0.relativePath)/**" })
+            .union(RuleCatalog.emptyFolderRoots.map { "~/\($0.relativePath)/**" })
+    }
 
     func testRulePatternsAreNotBroaderThanNecessary() {
         for rule in RuleCatalog.all {
@@ -411,5 +456,96 @@ extension RuleEngineTests {
     func testUnavailableHelperIsNotReportedAsProtection() {
         XCTAssertNotEqual(DenyReason.privilegedHelperUnavailable, .systemIntegrityProtected)
         XCTAssertNotEqual(DenyReason.privilegedHelperUnavailable, .immutableFlag)
+    }
+}
+
+/// Only a `requiresPrivilege` rule may be routed to the helper.
+///
+/// `HelperService.validatedRemovalDestination` accepts a path only when a
+/// `requiresPrivilege` rule in the shared catalog matches it. The engine used
+/// to send anything it could not unlink to the helper regardless of its rule —
+/// including plain user files — and every one of those came back
+/// "没有匹配的特权清理规则". The two sides now agree on what root is for.
+final class PrivilegeRoutingTests: XCTestCase {
+
+    private var sandbox: URL!
+
+    override func setUpWithError() throws {
+        sandbox = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MacVitalPrivilege-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: sandbox, withIntermediateDirectories: true)
+    }
+
+    override func tearDownWithError() throws {
+        // Restore write permission first or the sandbox itself cannot be removed.
+        if let enumerator = FileManager.default.enumerator(atPath: sandbox.path) {
+            for case let relative as String in enumerator {
+                let child = sandbox.appendingPathComponent(relative)
+                try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: child.path)
+            }
+        }
+        try? FileManager.default.removeItem(at: sandbox)
+    }
+
+    /// A rule anchored at the sandbox, so the test says nothing about the real
+    /// catalog and touches nothing in the user's home.
+    private func engine() -> RuleEngine {
+        let rule = CleanupRule(
+            id: "test.sandbox",
+            category: .caches,
+            pattern: "\(ProtectedPaths.normalize(sandbox.path))/**",
+            kind: "测试",
+            rationale: "测试用",
+            requiresPrivilege: false
+        )
+        return RuleEngine(
+            rules: RuleIndex(rules: [rule]),
+            processIndex: RunningProcessIndex(entries: []),
+            privilegedRemovalPossible: true
+        )
+    }
+
+    private func item(at url: URL) -> ScanItem {
+        ScanItem(
+            path: ProtectedPaths.normalize(url.path),
+            category: .caches,
+            ruleID: "test.sandbox",
+            kindHint: "测试",
+            sizeBytes: 7,
+            isDirectory: false
+        )
+    }
+
+    /// `unlink(2)` asks the *parent* for permission. A read-only file in a
+    /// writable directory moves to quarantine perfectly well — this used to be
+    /// reported as needing root, and root would have refused it too.
+    func testReadOnlyFileInAWritableDirectoryIsAllowed() throws {
+        let file = sandbox.appendingPathComponent("locked.bin")
+        try Data("payload".utf8).write(to: file)
+        try FileManager.default.setAttributes([.posixPermissions: 0o444], ofItemAtPath: file.path)
+
+        let decision = engine().evaluate(item(at: file))
+        XCTAssertEqual(decision.admission, .allow, decision.rationale)
+    }
+
+    /// When the parent really is unwritable, the honest answer is "you cannot
+    /// remove this" — not an offer of a helper that would refuse it.
+    func testUnwritableParentIsDeniedRatherThanRoutedToRoot() throws {
+        let directory = sandbox.appendingPathComponent("readonly", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let file = directory.appendingPathComponent("child.bin")
+        try Data("payload".utf8).write(to: file)
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: directory.path)
+
+        let decision = engine().evaluate(item(at: file))
+        XCTAssertTrue(decision.isDenied, "expected a deny, got \(decision.admission)")
+        XCTAssertEqual(decision.denyReason, .notRemovableByUser)
+        XCTAssertNotEqual(decision.admission, .allowWithPrivilege)
+    }
+
+    /// The two "cannot do this" reasons answer different questions and the UI
+    /// says different things about them.
+    func testNotRemovableIsDistinctFromHelperUnavailable() {
+        XCTAssertNotEqual(DenyReason.notRemovableByUser, .privilegedHelperUnavailable)
     }
 }

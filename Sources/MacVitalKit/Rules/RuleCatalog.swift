@@ -509,35 +509,73 @@ public enum RuleCatalog {
         "FamilyCircle",
         "com.apple.Safari.SafeBrowsing",
         "com.apple.AMPLibraryAgent",
+        // On-device model assets. Nothing breaks if they go, but "cache" is
+        // misleading about the cost: rebuilding them is a multi-gigabyte
+        // download from Apple, not a few seconds of work. Both were being
+        // pre-ticked by default on the machine this was audited on.
+        "com.apple.e5rt.e5bundlecache",
+        "com.apple.VisualIntelligenceCore",
     ]
 
     // MARK: - Large & duplicate files
 
+    /// The directories the large-file and duplicate scanners walk, and the
+    /// rule id suffix each one is filed under.
+    ///
+    /// Both rules used to be a single `~/**`, which is the widest pattern in
+    /// this file by a distance and told a reader nothing — the opposite of the
+    /// property the whole catalog is built on. They are also the two rules with
+    /// `allowedInUserData: true`, so the pattern was the *only* thing bounding
+    /// them: a scanner emitting `file.large` for something in `~/Library` would
+    /// have been admitted.
+    ///
+    /// One rule per root fixes that, and the scanners resolve their rule from
+    /// this list rather than naming an id. A root with no rule is not scanned —
+    /// default-deny, applied to configuration as well as to paths.
+    public static let userFileRoots: [(suffix: String, relativePath: String)] = [
+        ("downloads", "Downloads"),
+        ("documents", "Documents"),
+        ("desktop",   "Desktop"),
+        ("movies",    "Movies"),
+        ("pictures",  "Pictures"),
+    ]
+
     /// Generic rules for user-picked files. `autoSelectable` is false and the
     /// category is marked `requiresExplicitSelection`, so nothing here is ever
     /// pre-ticked — the user selects every one by hand.
-    public static let userFiles: [CleanupRule] = [
-        CleanupRule(
-            id: "file.large",
-            category: .largeFiles,
-            pattern: "~/**",
-            kind: "大文件",
-            rationale: "超过阈值的单个文件。是否需要保留只有你知道。",
-            rebuildable: false,
-            autoSelectable: false,
-            allowedInUserData: true
-        ),
-        CleanupRule(
-            id: "file.duplicate",
-            category: .duplicateFiles,
-            pattern: "~/**",
-            kind: "重复文件",
-            rationale: "与同组其他文件内容完全一致（SHA-256 校验）。每组会自动保留一份。",
-            rebuildable: false,
-            autoSelectable: false,
-            allowedInUserData: true
-        ),
-    ]
+    public static let userFiles: [CleanupRule] = userFileRoots.flatMap { root -> [CleanupRule] in
+        [
+            CleanupRule(
+                id: "file.large.\(root.suffix)",
+                category: .largeFiles,
+                pattern: "~/\(root.relativePath)/**",
+                kind: "大文件",
+                rationale: "超过阈值的单个文件。是否需要保留只有你知道。",
+                rebuildable: false,
+                autoSelectable: false,
+                allowedInUserData: true
+            ),
+            CleanupRule(
+                id: "file.duplicate.\(root.suffix)",
+                category: .duplicateFiles,
+                pattern: "~/\(root.relativePath)/**",
+                kind: "重复文件",
+                rationale: "与同组其他文件内容完全一致（SHA-256 校验）。每组会自动保留一份。",
+                rebuildable: false,
+                autoSelectable: false,
+                allowedInUserData: true
+            ),
+        ]
+    }
+
+    /// The rule covering `path` for a user-file category, if any.
+    ///
+    /// The scanners ask this rather than naming an id, so a configured root
+    /// that no rule describes simply is not scanned.
+    public static func userFileRule(for path: String, category: ScanCategory) -> CleanupRule? {
+        let normalized = ProtectedPaths.normalize(path)
+        return userFiles.first { $0.category == category && $0.pattern.matches(normalized) }
+    }
 
     // MARK: - Plug-in residue
 
@@ -578,27 +616,46 @@ public enum RuleCatalog {
 
     // MARK: - Empty folders
 
-    /// `~/Library` only, and deliberately not `~/Documents` and friends.
+    /// The `~/Library` directories the empty-folder scanner sweeps, and the
+    /// rule id each one is filed under.
     ///
-    /// The first draft had a second rule covering the user's file roots, with
-    /// `allowedInUserData: true` and a `~/**` pattern. `testUserDataOptInIsNarrow`
-    /// rejected it, and that test was right: the opt-in list is meant to be
-    /// readable as "unambiguous build output", and a wildcard over the whole
-    /// home directory is the opposite of that.
+    /// Generated rather than hand-written, and one rule per directory rather
+    /// than a single `~/Library/**`, for the reason stated at the top of this
+    /// file: reading a rule's pattern has to tell you the complete set of paths
+    /// it can ever authorise, and a wildcard over all of `~/Library` tells you
+    /// nothing. That the scanner happens to visit only these ten directories
+    /// today is not a property the catalog enforced — now it is.
     ///
-    /// The narrowing is also the better product answer. An empty folder under
-    /// `~/Library` is what an uninstall leaves behind; an empty folder in
-    /// `~/Documents` is the user's own filing, and proposing to delete it is
-    /// presumptuous in a way no space saving justifies — there is none anyway.
-    public static let emptyFolders: [CleanupRule] = [
+    /// Same arrangement as `pluginLocations`: the list exists once, and
+    /// `EmptyDirectoryScanner` walks it, so a directory cannot be added to the
+    /// sweep without a rule appearing alongside it.
+    ///
+    /// `~/Documents` and friends are deliberately absent. An empty folder there
+    /// is the user's own filing rather than residue, and reaching into it would
+    /// need an `allowedInUserData` rule with a home-wide pattern — which is
+    /// exactly what `testUserDataOptInIsNarrow` exists to prevent.
+    public static let emptyFolderRoots: [(suffix: String, relativePath: String)] = [
+        ("applicationSupport", "Library/Application Support"),
+        ("containers",         "Library/Containers"),
+        ("groupContainers",    "Library/Group Containers"),
+        ("applicationScripts", "Library/Application Scripts"),
+        ("caches",             "Library/Caches"),
+        ("logs",               "Library/Logs"),
+        ("preferences",        "Library/Preferences"),
+        ("savedState",         "Library/Saved Application State"),
+        ("httpStorages",       "Library/HTTPStorages"),
+        ("webKit",             "Library/WebKit"),
+    ]
+
+    public static let emptyFolders: [CleanupRule] = emptyFolderRoots.map { root in
         CleanupRule(
-            id: "empty.userLibrary",
+            id: "empty.\(root.suffix)",
             category: .emptyFolders,
-            pattern: "~/Library/**",
+            pattern: "~/\(root.relativePath)/**",
             kind: "空目录",
             rationale: "目录下没有任何文件，只剩空的子目录。多半是卸载或搬移之后留下的骨架。删除同时会移除其中的 .DS_Store。",
             rebuildable: false,
             autoSelectable: false
-        ),
-    ]
+        )
+    }
 }

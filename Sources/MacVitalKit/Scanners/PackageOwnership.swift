@@ -75,6 +75,18 @@ public enum PackageOwnership {
     /// before the move — so without this each answer costs two subprocesses.
     private static let cache = Cache()
 
+    /// Drop everything remembered so far.
+    ///
+    /// The cache is process-wide and had no way out, so an answer from the
+    /// first scan of a session was still being served hours later — after the
+    /// user had installed or removed packages, which is exactly what
+    /// `pkgutil` is being asked about. Cleared at the start of every scan: one
+    /// scan is short enough that the answer cannot go stale inside it, which
+    /// is the window the cache was added for.
+    public static func invalidate() {
+        cache.removeAll()
+    }
+
     private final class Cache: @unchecked Sendable {
         private let lock = NSLock()
         private var storage: [String: [String]] = [:]
@@ -86,6 +98,10 @@ public enum PackageOwnership {
 
         func store(_ value: [String], for path: String) {
             lock.lock(); storage[path] = value; lock.unlock()
+        }
+
+        func removeAll() {
+            lock.lock(); storage.removeAll(); lock.unlock()
         }
     }
 }

@@ -140,17 +140,38 @@ public struct RuleEngine: Sendable {
         // 9. In use? Deleting a directory a compiler is writing into corrupts
         //    the build; deleting a running app's container loses its state.
         if let process = processIndex.executingProcess(under: resolved) {
-            return .deny(rule.id, .inUse,
-                         "正在被「\(processIndex.describe(process))」（PID \(process.pid)）使用，请先退出该程序。")
+            return .inUse(
+                rule.id,
+                "正在被「\(processIndex.describe(process))」（PID \(process.pid)）使用，请先退出该程序。",
+                blockedBy: BlockingProcess(
+                    pid: process.pid,
+                    bundleIdentifier: process.bundleIdentifier,
+                    name: processIndex.describe(process)
+                )
+            )
         }
         if let bundleID = item.ownerHint?.bundleIdentifier, processIndex.isRunning(bundleIdentifier: bundleID) {
-            return .deny(rule.id, .inUse,
-                         "归属的 App「\(item.ownerHint?.label ?? bundleID)」正在运行，请先退出。")
+            return .inUse(
+                rule.id,
+                "归属的 App「\(item.ownerHint?.label ?? bundleID)」正在运行，请先退出。",
+                blockedBy: BlockingProcess(
+                    bundleIdentifier: bundleID,
+                    name: item.ownerHint?.label ?? bundleID
+                )
+            )
         }
 
         // 10. Everything below this line is an allow. The only remaining
         //    question is whether it needs root — and whether root is reachable.
-        if rule.requiresPrivilege || !SIPGuard.currentUserCanRemove(resolved) {
+        //
+        //    Only `requiresPrivilege` rules may route here, and that is not a
+        //    stylistic choice: `HelperService.validatedRemovalDestination`
+        //    accepts a path only when a `requiresPrivilege` rule in the shared
+        //    catalog matches it. Sending anything else to the helper produces a
+        //    guaranteed "没有匹配的特权清理规则" — a button that fails every
+        //    time, which is the exact failure the guard below was written to
+        //    stop for the ad-hoc case.
+        if rule.requiresPrivilege {
             // A build that cannot verify the helper can never remove these, so
             // offering them is offering a button that fails every time. It used
             // to: a sweep would tick a dozen /Library/LaunchDaemons entries,
@@ -163,6 +184,15 @@ public struct RuleEngine: Sendable {
                              + "（需要 Developer ID 证书签名的构建）。请在访达中手动处理。")
             }
             return .privileged(rule.id, rule.rationale + "（需要管理员授权）")
+        }
+
+        // A non-privileged rule whose path this user cannot unlink. Root is not
+        // the answer — see above — so say what is actually true instead of
+        // promising a helper that would refuse it.
+        guard SIPGuard.currentUserCanRemove(resolved) else {
+            return .deny(rule.id, .notRemovableByUser,
+                         "当前用户没有权限移动 \(PathRedaction.abbreviate(resolved))"
+                         + "（需要其所在目录的写权限）。请在访达中检查该目录的权限，或手动处理。")
         }
         return .allow(rule.id, rule.rationale)
     }

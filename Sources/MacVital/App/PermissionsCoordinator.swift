@@ -128,7 +128,7 @@ final class PermissionsCoordinator: ObservableObject {
                 // One success is proof: these paths are unreadable without the
                 // permission, so reading any of them means we have it.
                 fullDiskAccess = .granted
-                Log.app.debug("full disk access granted (probe \(path, privacy: .public))")
+                Log.app.debug("full disk access granted (probe \(Log.path(path), privacy: .public))")
                 return
             case .refused:
                 sawRefusal = true

@@ -308,3 +308,107 @@ extension QuarantineStoreTests {
         XCTAssertEqual(blocker, .contentsNotRemovable(path: blocked.path))
     }
 }
+
+/// What happens to the file when the manifest cannot be written.
+///
+/// The record is what makes a quarantined file reachable, so a record that
+/// never reaches disk describes a file nothing can restore or purge. The
+/// rollback for that used to remove the container unconditionally — which for
+/// a privileged move, where the item cannot be put back without the helper,
+/// deleted the user's file outright: not at its original path, not in
+/// quarantine, and named by no record.
+final class QuarantineRollbackTests: XCTestCase {
+
+    private var sandbox: URL!
+    private var root: URL!
+    private var store: QuarantineStore!
+
+    override func setUpWithError() throws {
+        sandbox = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MacVitalRollback-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: sandbox, withIntermediateDirectories: true)
+        root = sandbox.appendingPathComponent("Quarantine", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+
+        // A directory where the manifest belongs: it exists, so it is not a
+        // first run, and it cannot be read or written. Every `persist` fails.
+        try FileManager.default.createDirectory(
+            at: root.appendingPathComponent("manifest.json"), withIntermediateDirectories: true
+        )
+        store = QuarantineStore(root: root, retentionDays: 7)
+    }
+
+    override func tearDownWithError() throws {
+        try? FileManager.default.removeItem(at: sandbox)
+    }
+
+    private func makeSource(_ name: String) throws -> URL {
+        let url = sandbox.appendingPathComponent(name)
+        try Data("payload".utf8).write(to: url)
+        return url
+    }
+
+    private func item(at url: URL) -> ScanItem {
+        ScanItem(
+            path: url.path,
+            category: .caches,
+            ruleID: "cache.userCaches",
+            kindHint: "测试",
+            sizeBytes: 7,
+            isDirectory: false
+        )
+    }
+
+    func testUnwritableManifestPutsAnOrdinaryFileBack() async throws {
+        let source = try makeSource("ordinary.txt")
+
+        do {
+            _ = try await store.store(
+                item: item(at: source),
+                decision: .allow("cache.userCaches", "test"),
+                assessment: nil
+            )
+            XCTFail("expected the manifest write to fail")
+        } catch {
+            // expected
+        }
+
+        XCTAssertTrue(
+            FileManager.default.fileExists(atPath: source.path),
+            "the file must be back where it came from"
+        )
+    }
+
+    /// The one that lost data. A privileged move cannot be undone without the
+    /// helper, so the container has to stay — an orphan is listed, revealed and
+    /// recoverable in the quarantine screen; a deleted file is not.
+    func testUnwritableManifestDoesNotDeleteAPrivilegedMove() async throws {
+        let source = try makeSource("privileged.txt")
+
+        do {
+            _ = try await store.store(
+                item: item(at: source),
+                decision: .privileged("residue.systemLaunchDaemons", "test"),
+                assessment: nil,
+                privilegedMove: { from, to in
+                    try FileManager.default.moveItem(atPath: from, toPath: to)
+                }
+            )
+            XCTFail("expected the manifest write to fail")
+        } catch {
+            // expected
+        }
+
+        let items = root.appendingPathComponent("Items", isDirectory: true)
+        let containers = (try? FileManager.default.contentsOfDirectory(atPath: items.path)) ?? []
+        let survivors = containers.flatMap { container -> [String] in
+            let path = (items.path as NSString).appendingPathComponent(container)
+            return (try? FileManager.default.contentsOfDirectory(atPath: path)) ?? []
+        }
+
+        XCTAssertEqual(
+            survivors, ["privileged.txt"],
+            "the moved file must survive in its container rather than being deleted"
+        )
+    }
+}

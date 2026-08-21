@@ -59,7 +59,7 @@ macOS 空间清理与演示工具。核心不是「能删」，而是**敢删且
 
 ### 规则引擎：默认拒绝
 
-全部 49 条规则在 [RuleCatalog.swift](Sources/MacVitalKit/Rules/RuleCatalog.swift) 一个文件里。不在这份白名单里的路径，任何扫描器都提不出来，任何用户手势也选不中。
+全部 85 条规则在 [RuleCatalog.swift](Sources/MacVitalKit/Rules/RuleCatalog.swift) 一个文件里。不在这份白名单里的路径，任何扫描器都提不出来，任何用户手势也选不中。
 
 `RuleEngine.evaluate` 是唯一的准入闸门，10 道检查按顺序执行，任何一道都只能降级、不能升级：
 
@@ -76,7 +76,7 @@ macOS 空间清理与演示工具。核心不是「能删」，而是**敢删且
 
 **引擎每项跑两遍**：扫描时一遍渲染界面，移入隔离区前逐项再跑一遍。第二遍是必需的——两次之间可能有构建启动、App 打开、路径被换成符号链接。
 
-`allowedInUserData` 只有 8 条规则打开（node_modules / Pods / .build / target / .venv / .next / 大文件 / 重复文件），有测试锁死这份清单。特权规则 5 条，全部位于测试显式列出的系统根下。
+`allowedInUserData` 只有 16 条规则打开：6 条构建产物（node_modules / Pods / .build / target / .venv / .next），以及大文件和重复文件在 5 个用户目录（下载 / 文稿 / 桌面 / 影片 / 图片）下各自的一条。有测试锁死这份清单。特权规则 7 条，全部位于测试显式列出的系统根下。
 
 ### 隔离区
 
@@ -136,11 +136,11 @@ Sources/
     Annotate/           标注对象模型、画布、屏幕画笔、白板
     Screenshot/         截图、录屏、局域网直播
   MacVitalHelper/       特权助手（root，无 entitlement）
-Tests/MacVitalKitTests/ 72 个测试，全部针对安全核心
+Tests/MacVitalKitTests/ 162 个测试，全部针对安全核心
 Tools/MakeAppIcon.swift 图标生成脚本（图标可复现）
 ```
 
-约 13,400 行 Swift。
+约 15,200 行 Swift。
 
 ---
 

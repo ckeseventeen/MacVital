@@ -54,14 +54,7 @@ public enum LaunchItemAttribution {
 
     public static func liveness(ofPlist path: String) -> Liveness {
         guard let program = program(atPlist: path) else { return .targetMissing }
-        guard FileManager.default.fileExists(atPath: program) else { return .targetMissing }
-
-        guard let bundle = enclosingAppBundle(of: program) else {
-            return .bareHelper(program: program)
-        }
-        return FileManager.default.fileExists(atPath: bundle)
-            ? .liveInsideApp(bundlePath: bundle)
-            : .orphanedApp(bundlePath: bundle)
+        return liveness(program: program)
     }
 
     /// True only when the job belongs to an app that is still installed.
@@ -112,16 +105,51 @@ public enum LaunchItemAttribution {
     /// so counting that reference would keep both of them alive forever — each
     /// one vouching for the other.
     public static func isReferencedByALiveLaunchItem(_ path: String) -> Bool {
-        let normalized = ProtectedPaths.normalize(path)
+        liveTargetPrefixes.value().contains(ProtectedPaths.normalize(path))
+    }
+
+    /// Forget the cached launch-item index. Called at the start of a scan.
+    public static func invalidate() {
+        liveTargetPrefixes.reset()
+    }
+
+    /// Every program a live launch item points at, plus each of their ancestor
+    /// directories — so "is the target at or under this path" is one lookup.
+    ///
+    /// This used to re-read all three launchd directories and re-parse every
+    /// plist in them (twice per plist: once to attribute it, once to read its
+    /// program) for *each* residue candidate. On a machine with a few dozen
+    /// candidates and a hundred launch items that is thousands of property-list
+    /// parses to answer a question whose inputs did not change. Same shape as
+    /// `RunningProcessIndex.occupiedPrefixes`, for the same reason.
+    private static let liveTargetPrefixes = MemoizedStringSet {
+        var prefixes = Set<String>()
         for directory in launchItemDirectories {
             for child in FileWalker.children(of: URL(fileURLWithPath: directory))
             where child.pathExtension == "plist" {
-                guard belongsToAnInstalledApp(plist: child.path) else { continue }
                 guard let program = program(atPlist: child.path) else { continue }
-                let target = ProtectedPaths.normalize(program)
-                if target == normalized || target.hasPrefix(normalized + "/") { return true }
+                guard case .liveInsideApp = liveness(program: program) else { continue }
+
+                var path = ProtectedPaths.normalize(program)
+                while path.count > 1 {
+                    prefixes.insert(path)
+                    let parent = (path as NSString).deletingLastPathComponent
+                    if parent == path || parent.isEmpty { break }
+                    path = parent
+                }
             }
         }
-        return false
+        return prefixes
+    }
+
+    /// `liveness(ofPlist:)` without re-reading the plist.
+    private static func liveness(program: String) -> Liveness {
+        guard FileManager.default.fileExists(atPath: program) else { return .targetMissing }
+        guard let bundle = enclosingAppBundle(of: program) else {
+            return .bareHelper(program: program)
+        }
+        return FileManager.default.fileExists(atPath: bundle)
+            ? .liveInsideApp(bundlePath: bundle)
+            : .orphanedApp(bundlePath: bundle)
     }
 }

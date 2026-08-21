@@ -18,6 +18,20 @@ public enum FileWalker {
 
     /// Recursive size of a directory, in allocated bytes (what the disk
     /// actually gives back). Symlinks are counted as links, never followed.
+    ///
+    /// Deliberately **without** `.skipsPackageDescendants`. That option was
+    /// here and it made this function answer a different question than its
+    /// name: anything holding an `.app` reported only the bytes outside the
+    /// bundle. `DerivedData/<project>` keeps its build products in
+    /// `Build/Products/<config>/*.app`, which is most of its weight, and a
+    /// Sparkle-updated app parks `Autoupdate.app` under Application Support —
+    /// so the number in "可回收 X GB" was systematically short. Measured on a
+    /// synthetic tree: 12 KB reported against 112 KB actually on disk.
+    ///
+    /// Scanners that must not *propose* pieces of a bundle still say so where
+    /// that decision belongs — `LargeFileScanner` and `DuplicateFileScanner`
+    /// keep the option on their own enumerators, and `EmptyDirectoryScanner`
+    /// checks `isPackage` explicitly.
     public static func measure(_ url: URL) throws -> DirectoryMeasurement {
         var bytes: Int64 = 0
         var count = 0
@@ -27,7 +41,7 @@ public enum FileWalker {
         guard let enumerator = fm.enumerator(
             at: url,
             includingPropertiesForKeys: resourceKeys,
-            options: [.skipsPackageDescendants],
+            options: [],
             errorHandler: { _, _ in true }
         ) else {
             return DirectoryMeasurement(bytes: 0, fileCount: 0, newestModification: nil)
@@ -95,7 +109,10 @@ public enum FileWalker {
 
         while let (current, depth) = queue.popLast() {
             if Task.isCancelled { throw CancellationError() }
-            guard depth <= maxDepth else { continue }
+            // `depth` is the depth of `current`; its children sit one below, so
+            // this is the check that keeps the walk inside `maxDepth`. Testing
+            // `depth <= maxDepth` here descended one level further than asked.
+            guard depth < maxDepth else { continue }
 
             for child in children(of: current) {
                 guard let values = try? child.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey]),
@@ -108,7 +125,10 @@ public enum FileWalker {
                     results.append(child)
                     continue // do not descend into a match
                 }
-                if skippingHidden && name.hasPrefix(".") && !names.contains(name) { continue }
+                // A name in `names` already `continue`d above, so this only
+                // ever sees non-matches — the extra `names.contains` it used to
+                // carry could never be true.
+                if skippingHidden && name.hasPrefix(".") { continue }
                 // Never walk into app bundles or other packages.
                 if name.hasSuffix(".app") || name.hasSuffix(".framework") || name.hasSuffix(".bundle") { continue }
                 queue.append((child, depth + 1))

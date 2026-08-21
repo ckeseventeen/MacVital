@@ -38,7 +38,7 @@ final class ScanEngineTests: XCTestCase {
         ScanItem(
             path: path,
             category: category,
-            ruleID: "file.large",
+            ruleID: "file.large.downloads",
             kindHint: kind,
             sizeBytes: 7,
             isDirectory: false

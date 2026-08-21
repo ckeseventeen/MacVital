@@ -35,6 +35,34 @@ public enum DenyReason: String, Codable, Sendable {
     /// or a non-empty directory with no write permission. Moving such a tree
     /// into quarantine strands it there: it can be neither purged nor restored.
     case contentsNotRemovable
+    /// The current user cannot unlink it and no privileged rule describes it.
+    ///
+    /// Distinct from `.privilegedHelperUnavailable`, which means "root could do
+    /// this, but not on this build". Here root is not the answer either: the
+    /// helper only accepts paths a `requiresPrivilege` rule can describe, so
+    /// offering the helper would be offering a button that always fails.
+    case notRemovableByUser
+}
+
+/// Who is holding a path open, when that is why it was refused.
+///
+/// The name and the PID were only ever in the rationale sentence, which meant
+/// the UI could tell the user "quit it yourself" and nothing more. Carrying it
+/// structurally is what lets the app offer to do it for them — the one deny
+/// reason that is temporary deserves an action rather than an explanation.
+public struct BlockingProcess: Hashable, Codable, Sendable {
+    /// `nil` when the block came from a bundle identifier rather than a
+    /// specific process — the app may have several.
+    public var pid: Int32?
+    public var bundleIdentifier: String?
+    /// Best available label, for the button and the confirmation.
+    public var name: String
+
+    public init(pid: Int32? = nil, bundleIdentifier: String? = nil, name: String) {
+        self.pid = pid
+        self.bundleIdentifier = bundleIdentifier
+        self.name = name
+    }
 }
 
 public struct RuleDecision: Hashable, Codable, Sendable {
@@ -43,12 +71,21 @@ public struct RuleDecision: Hashable, Codable, Sendable {
     public var denyReason: DenyReason?
     /// Plain-language explanation, shown verbatim in the inspector.
     public var rationale: String
+    /// Set only alongside `denyReason == .inUse`.
+    public var blockedBy: BlockingProcess?
 
-    public init(admission: Admission, ruleID: String, denyReason: DenyReason? = nil, rationale: String) {
+    public init(
+        admission: Admission,
+        ruleID: String,
+        denyReason: DenyReason? = nil,
+        rationale: String,
+        blockedBy: BlockingProcess? = nil
+    ) {
         self.admission = admission
         self.ruleID = ruleID
         self.denyReason = denyReason
         self.rationale = rationale
+        self.blockedBy = blockedBy
     }
 
     public var isDenied: Bool { admission == .deny }
@@ -63,5 +100,18 @@ public struct RuleDecision: Hashable, Codable, Sendable {
 
     public static func deny(_ ruleID: String, _ reason: DenyReason, _ rationale: String) -> RuleDecision {
         RuleDecision(admission: .deny, ruleID: ruleID, denyReason: reason, rationale: rationale)
+    }
+
+    /// Refused because something is running. Carries the culprit so the UI can
+    /// offer to close it.
+    public static func inUse(
+        _ ruleID: String,
+        _ rationale: String,
+        blockedBy: BlockingProcess
+    ) -> RuleDecision {
+        RuleDecision(
+            admission: .deny, ruleID: ruleID, denyReason: .inUse,
+            rationale: rationale, blockedBy: blockedBy
+        )
     }
 }

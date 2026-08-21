@@ -31,25 +31,25 @@ public struct EmptyDirectoryScanner: Scanner {
     public init() {}
 
     public func scan(context: ScanContext, progress: @Sendable (ScanProgress) -> Void) async throws -> [ScanItem] {
-        let roots = Self.roots(context: context).filter { FileWalker.exists(URL(fileURLWithPath: $0)) }
+        let roots = Self.roots(context: context).filter { FileWalker.exists(URL(fileURLWithPath: $0.path)) }
         var items: [ScanItem] = []
 
         for (position, root) in roots.enumerated() {
             if Task.isCancelled { throw CancellationError() }
             progress(ScanProgress(
                 category: category,
-                message: PathRedaction.abbreviate(root),
+                message: PathRedaction.abbreviate(root.path),
                 fraction: Double(position) / Double(max(roots.count, 1))
             ))
             await Task.yield()
 
-            let url = URL(fileURLWithPath: root)
+            let url = URL(fileURLWithPath: root.path)
             // The root itself is never a candidate, however empty it is:
             // `~/Library/Caches` with nothing in it is a normal state, not
             // residue, and `ProtectedPaths` denies it anyway.
             for child in FileWalker.children(of: url) {
                 if Task.isCancelled { throw CancellationError() }
-                try collect(child, depth: 1, into: &items)
+                try collect(child, depth: 1, ruleID: root.ruleID, into: &items)
             }
         }
 
@@ -66,7 +66,7 @@ public struct EmptyDirectoryScanner: Scanner {
     /// `Logs/` produced nothing at all — the parent was not empty, and the walk
     /// stopped there. That is the single most common shape of the residue this
     /// scanner exists to find.
-    private func collect(_ url: URL, depth: Int, into items: inout [ScanItem]) throws {
+    private func collect(_ url: URL, depth: Int, ruleID: String, into items: inout [ScanItem]) throws {
         if Task.isCancelled { throw CancellationError() }
         guard depth <= maxDepth else { return }
         guard let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey, .isPackageKey]),
@@ -82,7 +82,7 @@ public struct EmptyDirectoryScanner: Scanner {
             // Not empty — but something inside it may be. Only this branch
             // recurses, so an empty run is still reported once, at its top.
             for child in FileWalker.children(of: url) {
-                try collect(child, depth: depth + 1, into: &items)
+                try collect(child, depth: depth + 1, ruleID: ruleID, into: &items)
             }
             return
         }
@@ -92,7 +92,7 @@ public struct EmptyDirectoryScanner: Scanner {
             path: ProtectedPaths.normalize(url.path),
             displayName: url.lastPathComponent,
             category: .emptyFolders,
-            ruleID: Self.ruleID,
+            ruleID: ruleID,
             kindHint: measurement.subdirectoryCount == 0
                 ? "空目录"
                 : "空目录（含 \(measurement.subdirectoryCount) 个同样为空的子目录）",
@@ -153,30 +153,15 @@ public struct EmptyDirectoryScanner: Scanner {
 
     // MARK: - Roots
 
-    /// `~/Library` only.
+    /// `~/Library` only, and read from the catalog rather than restated here.
     ///
-    /// `~/Documents` and friends are deliberately absent: an empty folder there
-    /// is the user's own filing rather than residue, and reaching into it would
-    /// need a `allowedInUserData` rule with a home-wide pattern — which is
-    /// exactly what `testUserDataOptInIsNarrow` exists to prevent.
-    static func roots(context: ScanContext) -> [String] {
-        let home = context.home
-        return [
-            "\(home)/Library/Application Support",
-            "\(home)/Library/Containers",
-            "\(home)/Library/Group Containers",
-            "\(home)/Library/Application Scripts",
-            "\(home)/Library/Caches",
-            "\(home)/Library/Logs",
-            "\(home)/Library/Preferences",
-            "\(home)/Library/Saved Application State",
-            "\(home)/Library/HTTPStorages",
-            "\(home)/Library/WebKit",
-        ]
+    /// The list used to live in this file while the rule was a single
+    /// `~/Library/**`, which meant the catalog could not tell you where this
+    /// scanner reaches. Now each directory has its own rule and the pairing is
+    /// derived from one list, so the sweep and the allowlist cannot drift.
+    static func roots(context: ScanContext) -> [(path: String, ruleID: String)] {
+        RuleCatalog.emptyFolderRoots.map { root in
+            (path: "\(context.home)/\(root.relativePath)", ruleID: "empty.\(root.suffix)")
+        }
     }
-
-    /// The catalog rule every candidate is filed under. The scanner adds no
-    /// authority of its own — `RuleEngine` re-derives it, and a path outside
-    /// `~/Library` matches no pattern and is denied.
-    static let ruleID = "empty.userLibrary"
 }

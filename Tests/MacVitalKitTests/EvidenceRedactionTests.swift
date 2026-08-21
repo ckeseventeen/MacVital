@@ -48,7 +48,7 @@ final class EvidenceRedactionTests: XCTestCase {
         let secret = try textFile("notes.md", contents: "API_KEY=sk-live-000 私人笔记")
 
         for category in [ScanCategory.largeFiles, .duplicateFiles] {
-            let ruleID = category == .largeFiles ? "file.large" : "file.duplicate"
+            let ruleID = category == .largeFiles ? "file.large.downloads" : "file.duplicate.downloads"
             let evidence = EvidenceCollector.collect(
                 for: item(at: secret, category: category, ruleID: ruleID), rule: nil
             )
@@ -86,7 +86,7 @@ final class EvidenceRedactionTests: XCTestCase {
     func testPathsLeaveNoAccountName() throws {
         let file = try textFile("thing.txt", contents: "hello")
         let evidence = EvidenceCollector.collect(
-            for: item(at: file, category: .largeFiles, ruleID: "file.large"), rule: nil
+            for: item(at: file, category: .largeFiles, ruleID: "file.large.downloads"), rule: nil
         )
         let user = (PathRedaction.home as NSString).lastPathComponent
         XCTAssertFalse(evidence.redactedPath.contains(user), "redacted path still names the account")
@@ -97,7 +97,7 @@ final class EvidenceRedactionTests: XCTestCase {
     func testRenderedPromptCarriesNoContentsForUserFiles() throws {
         let secret = try textFile("notes.md", contents: "API_KEY=sk-live-000")
         let evidence = EvidenceCollector.collect(
-            for: item(at: secret, category: .largeFiles, ruleID: "file.large"), rule: nil
+            for: item(at: secret, category: .largeFiles, ruleID: "file.large.downloads"), rule: nil
         )
         let message = PromptBuilder.userMessage(for: [evidence])
 

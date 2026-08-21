@@ -8,7 +8,7 @@
 
 ## 一、准入是白名单，不是黑名单
 
-全部 49 条规则集中在 [`RuleCatalog.swift`](../Sources/MacVitalKit/Rules/RuleCatalog.swift) 一个文件。
+全部 85 条规则集中在 [`RuleCatalog.swift`](../Sources/MacVitalKit/Rules/RuleCatalog.swift) 一个文件。
 
 **不在这份清单里的路径，系统里没有任何代码路径能把它变成删除目标。** 扫描器提不出来（`ScanItem` 必须携带一个 `ruleID`），用户点不中（UI 只渲染扫描器产出的项），模型也够不着（`AIAdvisor` 协议没有返回准入的方法）。
 
@@ -33,9 +33,12 @@
 | 7 | 敏感用户目录 | 文稿/桌面/下载/图片默认禁止，除非规则显式 `allowedInUserData` |
 | 8 | 路径必须仍匹配声称的规则模式 | 这道检查是「读规则就能知道它最多能删什么」成立的原因 |
 | 9 | 占用检测 | 删正在被编译器写入的目录会毁掉构建；删运行中 App 的容器会丢它的状态 |
-| 10 | 是否需要 root | 决定走不走特权助手 |
+| 10 | 是否需要 root | 决定走不走特权助手。**只有 `requiresPrivilege` 规则能走**——Helper 也只认这些规则，把别的路径递过去必然被它拒绝 |
+| 10b | 当前用户能否 unlink | 非特权规则的路径若连父目录都不可写，直接拒绝（`notRemovableByUser`）。root 在这里不是答案，说实话比给一个必然失败的按钮好 |
 
 **每道检查只能降级，没有任何一道能把 deny 变回 allow。**
+
+第 10 条的两侧必须一致：`RuleEngine` 判定「走特权助手」的条件，和 `HelperService.validatedRemovalDestination` 接受路径的条件，是同一个 `requiresPrivilege` 谓词。两边一旦分叉，用户看到的就是一个每次都失败的按钮——`PrivilegeRoutingTests` 锁住这一点。
 
 ### 跑两遍
 
@@ -88,7 +91,7 @@
 ### Helper 假设客户端是敌对的
 
 - 同一份 `RuleCatalog` 在 root 侧**再跑一遍**
-- 只接受能被 `requiresPrivilege` 规则匹配的路径（目前 5 条，全在测试显式列出的系统根下）
+- 只接受能被 `requiresPrivilege` 规则匹配的路径（目前 7 条，全在测试显式列出的系统根下）
 - `purge` 只允许删隔离区内部的路径
 - 隔离区路径必须形如 `/Users/<name>/Library/Application Support/MacVital/Quarantine`，且**属主不能是 root**（root 拥有的隔离区意味着有人伪造了它）
 - 归还属主用 `lchown` 而不是 `chown`——被移动的树来自特权目录且内容非我方编写，`chown` 会跟随符号链接，等于把系统上任意文件的属主交给非特权用户

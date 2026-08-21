@@ -40,10 +40,12 @@ public struct LocalModelAdvisor: AIAdvisor {
     }
 
     public func assess(_ batch: [AIEvidence]) async throws -> [UUID: AIAssessment] {
-        guard configuration.endpoint.host == "127.0.0.1" || configuration.endpoint.host == "localhost" else {
-            // A misconfigured endpoint would silently turn the local, private
-            // path into an arbitrary network upload. Refuse rather than send.
-            throw AdvisorError.notConfigured("本地模型地址必须指向 127.0.0.1")
+        // Numeric loopback only. `localhost` was accepted here, and it is a
+        // name — `/etc/hosts` or a resolver can point it anywhere, which is
+        // precisely the "silently becomes a network upload" case this guard
+        // exists to stop.
+        guard ["127.0.0.1", "::1"].contains(configuration.endpoint.host ?? "") else {
+            throw AdvisorError.notConfigured("本地模型地址必须指向 127.0.0.1（不接受主机名）")
         }
 
         var merged: [UUID: AIAssessment] = [:]

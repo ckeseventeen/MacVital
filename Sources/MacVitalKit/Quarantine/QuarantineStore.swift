@@ -192,12 +192,32 @@ public actor QuarantineStore {
             // The file has already moved. A record we cannot write describes a
             // file nothing could ever restore or purge, so put it back rather
             // than leave it stranded.
+            //
+            // The container may only be removed once the item is provably out
+            // of it. This used to remove it unconditionally, which for a
+            // privileged move — where we cannot put the item back without the
+            // helper — deleted the user's file outright: not at its original
+            // path, not in quarantine, and named by no record. An orphan
+            // container is recoverable (the quarantine screen lists and reveals
+            // them); a deleted file is not.
             records.removeLast()
+
+            var movedBack = false
             if decision.admission != .allowWithPrivilege {
-                try? moveOrCopy(from: destination, to: source)
+                do {
+                    try moveOrCopy(from: destination, to: source)
+                    movedBack = true
+                } catch {
+                    Log.quarantine.error("could not move \(Log.path(item.path), privacy: .public) back: \(error.localizedDescription, privacy: .public)")
+                }
             }
-            try? FileManager.default.removeItem(at: container)
-            Log.quarantine.error("rolled back \(Log.path(item.path), privacy: .public) after manifest failure")
+
+            if movedBack {
+                try? FileManager.default.removeItem(at: container)
+                Log.quarantine.error("rolled back \(Log.path(item.path), privacy: .public) after manifest failure")
+            } else {
+                Log.quarantine.error("\(Log.path(item.path), privacy: .public) is stranded in \(container.lastPathComponent, privacy: .public) after manifest failure; left in place for orphan recovery")
+            }
             throw error
         }
         Log.quarantine.info("quarantined \(Log.path(item.path), privacy: .public) (\(item.sizeBytes) bytes)")

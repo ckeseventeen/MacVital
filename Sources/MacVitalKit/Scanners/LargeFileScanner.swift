@@ -15,12 +15,18 @@ public struct LargeFileScanner: Scanner {
 
         for (position, root) in roots.enumerated() {
             if Task.isCancelled { throw CancellationError() }
+            // No rule covers this root, so nothing inside it could be removed
+            // anyway. Reporting it would be a list of rows that all fail.
+            guard let rule = RuleCatalog.userFileRule(for: root.path, category: category) else {
+                Log.scan.debug("no rule covers \(Log.path(root.path), privacy: .public); not scanning it")
+                continue
+            }
             progress(ScanProgress(
                 category: category,
                 message: PathRedaction.abbreviate(root.path),
                 fraction: Double(position) / Double(max(roots.count, 1))
             ))
-            found += try scanRoot(root, context: context)
+            found += try scanRoot(root, ruleID: rule.id, context: context)
         }
 
         return Array(
@@ -29,7 +35,7 @@ public struct LargeFileScanner: Scanner {
         )
     }
 
-    private func scanRoot(_ root: URL, context: ScanContext) throws -> [ScanItem] {
+    private func scanRoot(_ root: URL, ruleID: String, context: ScanContext) throws -> [ScanItem] {
         let keys: [URLResourceKey] = [
             .isRegularFileKey, .isSymbolicLinkKey, .isPackageKey,
             .totalFileAllocatedSizeKey, .contentModificationDateKey, .contentAccessDateKey,
@@ -53,7 +59,7 @@ public struct LargeFileScanner: Scanner {
                 path: ProtectedPaths.normalize(url.path),
                 displayName: url.lastPathComponent,
                 category: .largeFiles,
-                ruleID: "file.large",
+                ruleID: ruleID,
                 kindHint: url.pathExtension.isEmpty ? "文件" : url.pathExtension.uppercased(),
                 sizeBytes: bytes,
                 fileCount: 1,

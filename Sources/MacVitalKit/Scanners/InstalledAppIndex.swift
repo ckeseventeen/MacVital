@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(AppKit)
+import AppKit
+#endif
 
 /// Everything currently installed, indexed by the identifiers that residue
 /// files are named after.
@@ -141,6 +144,17 @@ public struct InstalledAppIndex: Sendable {
         if let app = apps.first(where: { $0.bundleIdentifier.lowercased() == token }) {
             return .installed(app)
         }
+        // Ask the system before concluding anything. The index above knows six
+        // directories; people run apps from `~/Downloads`, from an external
+        // volume, from a two-deep vendor folder under `/Applications` that the
+        // one-level walk does not reach. Every one of those looks uninstalled
+        // from here — and "uninstalled" is what turns an app's preferences and
+        // its Application Support directory into "residue" and offers them for
+        // removal. LaunchServices knows every bundle the system has registered,
+        // wherever it lives.
+        if let app = Self.launchServicesApp(for: token) {
+            return .installed(app)
+        }
         // An identifier hanging off an installed app's own identifier belongs
         // to that app — it is an extension, a helper, an updater.
         //
@@ -201,6 +215,78 @@ public struct InstalledAppIndex: Sendable {
 
     public func app(withBundleIdentifier id: String) -> App? {
         apps.first { $0.bundleIdentifier.caseInsensitiveCompare(id) == .orderedSame }
+    }
+
+    // MARK: - LaunchServices
+
+    /// The app registered for a bundle identifier, wherever it lives.
+    ///
+    /// Only ever consulted to *suppress* a residue finding, never to produce
+    /// one, so a wrong answer here costs a missed cleanup suggestion rather
+    /// than someone's settings.
+    static func launchServicesApp(for token: String) -> App? {
+        guard looksLikeBundleIdentifier(token) else { return nil }
+        if let cached = launchServicesCache.value(for: token) { return cached.app }
+
+        let resolved = resolveThroughLaunchServices(token)
+        launchServicesCache.store(Box(app: resolved), for: token)
+        return resolved
+    }
+
+    /// Drop what LaunchServices told us. Called at the start of a scan.
+    public static func invalidateLaunchServicesCache() {
+        launchServicesCache.removeAll()
+    }
+
+    private static func resolveThroughLaunchServices(_ token: String) -> App? {
+        #if canImport(AppKit)
+        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: token) else { return nil }
+        // LaunchServices keeps registrations for apps that have been deleted,
+        // and a stale one would suppress exactly the residue this app exists to
+        // find. A registration is only evidence when the bundle is still there.
+        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+
+        let bundle = Bundle(url: url)
+        let identifier = bundle?.bundleIdentifier ?? token
+        let name = (bundle?.object(forInfoDictionaryKey: "CFBundleName") as? String)
+            ?? url.deletingPathExtension().lastPathComponent
+        return App(bundleIdentifier: identifier, name: name, path: url.path)
+        #else
+        return nil
+        #endif
+    }
+
+    /// Reverse-DNS shaped. Asking LaunchServices about `Google` or
+    /// `baidunetdisk` is meaningless and costs a round trip per candidate.
+    static func looksLikeBundleIdentifier(_ token: String) -> Bool {
+        guard !token.hasPrefix("."), !token.hasSuffix(".") else { return false }
+        let parts = token.split(separator: ".", omittingEmptySubsequences: false)
+        guard parts.count >= 2 else { return false }
+        return parts.allSatisfy { !$0.isEmpty }
+    }
+
+    /// `nil` is a real answer here — "LaunchServices does not know this one" —
+    /// so it has to be storable, hence the box.
+    private struct Box: Sendable { let app: App? }
+
+    private static let launchServicesCache = Cache()
+
+    private final class Cache: @unchecked Sendable {
+        private let lock = NSLock()
+        private var storage: [String: Box] = [:]
+
+        func value(for key: String) -> Box? {
+            lock.lock(); defer { lock.unlock() }
+            return storage[key]
+        }
+
+        func store(_ value: Box, for key: String) {
+            lock.lock(); storage[key] = value; lock.unlock()
+        }
+
+        func removeAll() {
+            lock.lock(); storage.removeAll(); lock.unlock()
+        }
     }
 
     // MARK: - Helpers

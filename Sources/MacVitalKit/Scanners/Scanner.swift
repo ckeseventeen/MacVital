@@ -29,10 +29,11 @@ public struct ScanOptions: Sendable, Codable, Equatable {
         ]
         self.projectSearchDepth = projectSearchDepth
         self.largeFileThreshold = largeFileThreshold
-        self.userFileRoots = userFileRoots ?? [
-            "\(home)/Downloads", "\(home)/Documents", "\(home)/Desktop",
-            "\(home)/Movies", "\(home)/Pictures",
-        ]
+        // Derived from the catalog, not restated: these roots and the rules
+        // that authorise removals inside them have to be the same list.
+        self.userFileRoots = userFileRoots ?? RuleCatalog.userFileRoots.map {
+            "\(home)/\($0.relativePath)"
+        }
         self.maxUserFileResults = maxUserFileResults
         self.minimumReportedSize = minimumReportedSize
     }

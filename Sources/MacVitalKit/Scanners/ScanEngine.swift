@@ -91,6 +91,14 @@ public struct ScanEngine: Sendable {
         progress: @Sendable @escaping (ScanProgress) -> Void
     ) async throws -> ScanResult {
         let start = Date()
+        // Both caches answer questions about state that changes between scans:
+        // which package owns a path, and which launchd jobs are live. They
+        // exist to stop one scan asking the same question twice, not to carry
+        // an answer across the life of the process.
+        PackageOwnership.invalidate()
+        LaunchItemAttribution.invalidate()
+        SystemDomainIndex.invalidate()
+        InstalledAppIndex.invalidateLaunchServicesCache()
         let context = ScanContext(rules: rules, options: options)
         let active = scanners.filter { categories.contains($0.category) }
         let aggregator = ProgressAggregator(categories: active.map(\.category), report: progress)
