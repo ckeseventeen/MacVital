@@ -333,7 +333,13 @@ private struct StatusTile: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 14)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        // `maxHeight` matters as much as `maxWidth` here. A `LazyVGrid` row is
+        // as tall as its tallest cell, but each cell only takes its own
+        // intrinsic height and is centred in the row — so the background
+        // painted a short box floating in a tall row. Narrow the window until
+        // one card's text wraps to a second line and the three stop matching:
+        // "此构建不可用（需要 Developer ID 签名）" is the one that does it.
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         // The same surface as `QuickAction` directly above it: both are
         // page-level cards in a three-column grid of identical width, and a
         // `well` there was a third treatment (recessed fill at card radius)
@@ -371,6 +377,7 @@ private struct StatTile: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 16)
         .padding(.vertical, 14)
+        .frame(maxHeight: .infinity)
         .background(Theme.well, in: RoundedRectangle(cornerRadius: Theme.Radius.tile, style: .continuous))
     }
 }
@@ -402,7 +409,11 @@ private struct QuickAction: View {
             }
             .padding(.horizontal, 17)
             .padding(.vertical, 15)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            // Fills the row height for the same reason as `StatusTile`; a long
+            // title wrapping at a narrow window is what makes the difference
+            // visible. Vertically centred rather than top-aligned — this is one
+            // row of icon and text, not a block that flows.
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
             .glassPanel(tinted: isHovering ? tint : nil)
             .overlay(
                 RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
