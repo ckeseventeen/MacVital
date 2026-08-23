@@ -299,7 +299,16 @@ private final class FrameSink: NSObject, SCStreamOutput, @unchecked Sendable {
         // for a lock that must be unlocked by the thread that took it.
         let state = close()
 
-        guard !state.wasClosed, state.didStart else { return .empty }
+        guard !state.wasClosed else { return .empty }
+        guard state.didStart else {
+            // Never started, and two different reasons look the same from
+            // here. `.unknown` means no complete frame ever arrived — stopping
+            // straight after starting, nothing to keep and nothing to report.
+            // `.failed` means `startWriting()` was refused, which used to be
+            // reported as "empty" and therefore silently discarded: the user
+            // pressed stop, got no file, and was told nothing.
+            return state.status == .failed ? .failed(writer.error) : .empty
+        }
         guard state.status == .writing else { return .failed(writer.error) }
 
         await writer.finishWriting()
