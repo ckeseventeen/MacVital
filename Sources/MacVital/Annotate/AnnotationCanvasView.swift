@@ -70,7 +70,7 @@ final class AnnotationDocument {
 /// Used in two places with no changes: transparent over the whole screen, and
 /// opaque over a captured screenshot. Everything it knows about is the document
 /// and the tool — never where the pixels underneath came from.
-final class AnnotationCanvasView: NSView {
+final class AnnotationCanvasView: NSView, NSTextFieldDelegate {
     let document = AnnotationDocument()
 
     var tool: AnnotationTool = .pen { didSet { updateCursor(); if tool != .select { selectedID = nil; needsDisplay = true } } }
@@ -85,6 +85,8 @@ final class AnnotationCanvasView: NSView {
     private var selectedID: UUID?
     private var dragOrigin: CGPoint?
     private var draggingHandle: AnnotationObject.Handle.Kind?
+    /// The text field currently being edited, if any.
+    private weak var textField: NSTextField?
     private var didCheckpointThisDrag = false
 
     override var isFlipped: Bool { false }
@@ -279,6 +281,10 @@ final class AnnotationCanvasView: NSView {
     // MARK: - Text
 
     private func beginTextEntry(at point: CGPoint) {
+        // Whatever was open is settled first. Clicking a second time with the
+        // text tool used to leave the first field sitting there.
+        finishTextEntry()
+
         let field = NSTextField(frame: NSRect(x: point.x, y: point.y - 12, width: 220, height: 24))
         field.font = .systemFont(ofSize: 18, weight: .medium)
         field.textColor = style.color
@@ -288,14 +294,34 @@ final class AnnotationCanvasView: NSView {
         field.placeholderString = "输入文字"
         field.target = self
         field.action = #selector(commitText(_:))
+        field.delegate = self
         addSubview(field)
+        textField = field
         window?.makeFirstResponder(field)
     }
 
     @objc private func commitText(_ sender: NSTextField) {
-        let text = sender.stringValue
-        let origin = CGPoint(x: sender.frame.minX, y: sender.frame.minY)
-        sender.removeFromSuperview()
+        finishTextEntry()
+    }
+
+    /// Takes whatever is in the open field and takes the field away.
+    ///
+    /// Removal used to live in the action, which is only sent when the user
+    /// presses Return. Escape aborts editing *without* sending it, and so does
+    /// clicking elsewhere — so either one left a live `NSTextField` in the
+    /// canvas, and a few of them stacked up as the user kept working. Ending
+    /// the edit by any route now lands here.
+    private func finishTextEntry() {
+        guard let field = textField else { return }
+        // Cleared first: removing the field ends editing, which calls back in
+        // through the delegate, and this is what makes that a no-op.
+        textField = nil
+
+        let text = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let origin = CGPoint(x: field.frame.minX, y: field.frame.minY)
+        field.delegate = nil
+        field.target = nil
+        field.removeFromSuperview()
         guard !text.isEmpty else { return }
 
         document.checkpoint()
@@ -307,11 +333,23 @@ final class AnnotationCanvasView: NSView {
         onChange?()
     }
 
+    /// Escape, Tab, or focus moving elsewhere — every way out of an edit that
+    /// is not the Return key.
+    func controlTextDidEndEditing(_ obj: Notification) {
+        finishTextEntry()
+    }
+
     // MARK: - Commands
 
     func undo() { document.undo(); selectedID = nil; needsDisplay = true; onChange?() }
     func redo() { document.redo(); selectedID = nil; needsDisplay = true; onChange?() }
-    func clear() { document.clear(); selectedID = nil; needsDisplay = true; onChange?() }
+    func clear() {
+        finishTextEntry()
+        document.clear()
+        selectedID = nil
+        needsDisplay = true
+        onChange?()
+    }
 
     func deleteSelection() {
         guard let id = selectedID else { return }
