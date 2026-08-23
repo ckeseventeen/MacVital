@@ -79,6 +79,10 @@ final class StartupViewModel: ObservableObject {
         let quarantineRoot = environment.quarantineRoot
 
         let loaded: [Row] = await Task.detached(priority: .userInitiated) {
+            // This screen does not go through `ScanEngine`, so nothing else
+            // drops the memoised answers. Without it, disabling an item and
+            // watching the list reload still showed the old launchd verdict.
+            ScanCaches.invalidate()
             let items = LoginItemScanner().scan()
             // One snapshot for both questions: what the engine sees as in use,
             // and which of these jobs is up right now.

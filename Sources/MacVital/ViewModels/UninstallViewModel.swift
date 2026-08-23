@@ -261,6 +261,11 @@ final class UninstallViewModel: ObservableObject {
         )
 
         let planned: [Row] = await Task.detached(priority: .userInitiated) {
+            // Same reason as the startup screen: this path builds its own
+            // engine and would otherwise be served whatever the last sweep
+            // memoised. The re-plan after an uninstall is exactly the moment
+            // that has to see the disk as it is now.
+            ScanCaches.invalidate()
             let candidates = AppUninstallPlanner().plan(for: app)
             // Same engine, same catalog as every other removal path. The
             // uninstaller decides what to *propose*; permission is re-derived
