@@ -121,7 +121,38 @@ public actor HelperClient {
     ///
     /// The `resumed` flag is not defensive padding either: XPC can in principle
     /// deliver both, and resuming a checked continuation twice is a crash.
+    /// How long a single helper call may take before the caller gives up.
+    ///
+    /// Generous, because the work is real: `purge` removes a tree, and a move
+    /// that falls back to copy across volumes is not instant. Bounded, because
+    /// the alternative is the hang this whole method exists to prevent — the
+    /// error handler below only fires when the *connection* breaks, and a
+    /// helper that accepts the message and then blocks (a stuck network
+    /// volume, a deadlock on the root side) never trips it. The first version
+    /// of this fix missed that case entirely.
+    private static let replyTimeout: Duration = .seconds(120)
+
     private func call<T: Sendable>(
+        _ body: @escaping @Sendable (MacVitalHelperProtocol, @escaping @Sendable (T) -> Void) -> Void
+    ) async throws -> T {
+        try await withThrowingTaskGroup(of: T.self) { group in
+            group.addTask { try await self.send(body) }
+            group.addTask {
+                try await Task.sleep(for: Self.replyTimeout)
+                throw HelperError.timedOut
+            }
+            guard let result = try await group.next() else { throw HelperError.timedOut }
+            // The losing task is cancelled, but a continuation waiting on XPC
+            // does not observe cancellation — it stays parked until the reply
+            // arrives or the connection dies. That leaks one suspended task in
+            // the timeout case, which is the right trade against leaving the
+            // user looking at a progress bar that will never move.
+            group.cancelAll()
+            return result
+        }
+    }
+
+    private func send<T: Sendable>(
         _ body: @escaping @Sendable (MacVitalHelperProtocol, @escaping @Sendable (T) -> Void) -> Void
     ) async throws -> T {
         let connection = try proxy()
@@ -227,6 +258,8 @@ public enum HelperError: LocalizedError {
     case unverifiedHelper
     case notApproved
     case remote(String)
+    /// The helper took the message and never answered.
+    case timedOut
     /// The message never reached the helper — not registered, not approved, or
     /// the code-signing requirement was not met.
     case transport(String)
@@ -243,6 +276,9 @@ public enum HelperError: LocalizedError {
                  + "涉及系统目录的项目请在访达中手动处理。"
         case .notApproved: return "特权助手尚未获得授权，请在系统设置中允许。"
         case .remote(let message): return message
+        case .timedOut:
+            return "特权助手在 2 分钟内没有响应，操作已中止。"
+                 + "文件可能已经移动了一部分——请到隔离区查看，必要时用「回收孤立容器」整理。"
         case .transport(let detail):
             return "无法与特权助手通信：\(detail)。"
                  + "请确认助手已安装，并已在「系统设置 → 通用 → 登录项」中允许。"
