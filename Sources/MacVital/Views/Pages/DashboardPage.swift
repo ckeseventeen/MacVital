@@ -334,7 +334,12 @@ private struct StatusTile: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .well(cornerRadius: Theme.Radius.card)
+        // The same surface as `QuickAction` directly above it: both are
+        // page-level cards in a three-column grid of identical width, and a
+        // `well` there was a third treatment (recessed fill at card radius)
+        // that matched neither it nor `StatTile`. Interactivity is carried by
+        // the hover tint on the quick actions, not by the surface.
+        .glassPanel()
     }
 }
 
