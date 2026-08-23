@@ -104,7 +104,7 @@ struct StartupPage: View {
                 Image(systemName: "lock.circle.fill")
                     .font(.system(size: 14))
                     .foregroundStyle(Theme.junk)
-                VStack(alignment: .leading, spacing: 3) {
+                VStack(alignment: .leading, spacing: 5) {
                     Text("这些条目都不能在当前构建里操作")
                         .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(Theme.label)
@@ -112,6 +112,18 @@ struct StartupPage: View {
                         .font(.system(size: 12))
                         .foregroundStyle(Theme.secondaryLabel)
                         .fixedSize(horizontal: false, vertical: true)
+                    // The door. Finder can write where this app cannot — it
+                    // asks for an administrator password and does it — and
+                    // without saying so the page is a wall with no way past.
+                    Text("访达可以：把 plist 拖进废纸篓时系统会要一次密码。"
+                         + "代价是它进的是废纸篓而不是隔离区，没有一键还原。")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Theme.secondaryLabel)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Button("在访达中打开该目录") { model.revealBlockedDirectory() }
+                        .buttonStyle(.link)
+                        .font(.system(size: 12))
+                        .padding(.top, 1)
                 }
                 Spacer(minLength: 0)
             }
@@ -360,6 +372,13 @@ private struct StartupRow: View {
                     .foregroundStyle(Theme.tertiaryLabel)
                     .help("launchd 会立刻重新启动它，所以现在结束它没有意义。"
                           + "停用之后重新登录，它才不会再起来。")
+            }
+
+            if !row.isSelectable {
+                Button("访达", action: reveal)
+                    .buttonStyle(.link)
+                    .font(.system(size: 12))
+                    .help("在访达中显示这个 plist。把它拖进废纸篓时系统会要一次密码。")
             }
 
             if row.decision.admission != .allow {

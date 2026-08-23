@@ -187,6 +187,23 @@ final class StartupViewModel: ObservableObject {
 
     func clearStopMessage() { stopMessage = nil }
 
+    /// Open the directory these locked items live in.
+    ///
+    /// The way out that the page never offered. MacVital cannot write to
+    /// `/Library/LaunchDaemons` without the helper, but Finder can — it asks
+    /// for an administrator password and moves the file. "需要管理员权限，
+    /// 然后又授权不了" was an accurate reading of a screen that showed a wall
+    /// and no door.
+    ///
+    /// The trade is real and worth stating where the user can see it: doing it
+    /// in Finder means the plist goes to the Trash rather than the quarantine,
+    /// so there is no one-click restore afterwards.
+    func revealBlockedDirectory() {
+        let directory = visibleRows.first(where: { !$0.isSelectable })?.item.scope.directory
+            ?? LoginItem.Scope.daemon.directory
+        NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: directory)
+    }
+
     func reveal(_ row: Row) {
         NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: row.item.path)])
     }

@@ -78,11 +78,18 @@ struct AppShell: View {
 
     private var logo: some View {
         HStack(spacing: 9) {
-            Image(systemName: "internaldrive.fill")
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(.white)
-                .frame(width: 27, height: 27)
-                .background(Theme.accent, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+            // The real app icon, not an impression of it.
+            //
+            // This was `internaldrive.fill` on a flat `Theme.accent` square: a
+            // different glyph from the one the icon draws, on a different blue,
+            // with a different corner radius. Nobody had to get it wrong for
+            // them to diverge — the icon was redrawn and this stayed where it
+            // was, which is what a hand-built copy of another asset always
+            // eventually does. Reading the icon means it cannot drift again.
+            Image(nsImage: NSApp.applicationIconImage)
+                .resizable()
+                .interpolation(.high)
+                .frame(width: 30, height: 30)
             Text("MacVital")
                 .font(.system(size: 16, weight: .medium))
                 .foregroundStyle(Theme.label)
