@@ -64,6 +64,27 @@ final class StartupViewModel: ObservableObject {
 
     var orphanCount: Int { rows.filter { $0.item.isOrphaned }.count }
 
+    /// The one thing standing in the way, when it is the same thing for every
+    /// row on screen.
+    ///
+    /// On a build without a working privileged helper that is every time: this
+    /// machine's five launch items all live in `/Library`, `~/Library/LaunchAgents`
+    /// is empty, and so the entire list comes back locked. The page said so
+    /// only in a tooltip on each disabled checkbox — and a disabled control
+    /// does not reliably show one — while the section headers said
+    /// 「需要管理员授权」, which reads as "go and authorise it" rather than
+    /// "this build cannot, and no amount of clicking will change that".
+    ///
+    /// `nil` as soon as anything is actionable, or when the rows are blocked
+    /// for different reasons; a single banner would be a lie in both cases.
+    var uniformBlocker: String? {
+        let visible = visibleRows
+        guard !visible.isEmpty, visible.allSatisfy({ !$0.isSelectable }) else { return nil }
+        let reasons = Set(visible.compactMap(\.decision.denyReason))
+        guard reasons.count == 1 else { return nil }
+        return visible.first?.decision.rationale
+    }
+
     var needsHelper: Bool {
         rows.contains { selection.contains($0.id) && $0.decision.admission == .allowWithPrivilege }
             && environment.helperStatus != .enabled

@@ -28,6 +28,7 @@ struct StartupPage: View {
                         .disabled(model.isLoading)
                 }
                 controls
+                blockedNotice
             }
             .padding(.horizontal, Theme.Metric.pagePaddingH)
             .padding(.top, Theme.Metric.pagePaddingV)
@@ -93,6 +94,32 @@ struct StartupPage: View {
         return model.orphanCount > 0
             ? "\(total) 项 · 其中 \(model.orphanCount) 项指向的程序已不存在"
             : "\(total) 项 · 没有发现失效条目"
+    }
+
+    /// Says once, in the open, what the rows can only say in a tooltip.
+    @ViewBuilder
+    private var blockedNotice: some View {
+        if let reason = model.uniformBlocker {
+            HStack(alignment: .top, spacing: 9) {
+                Image(systemName: "lock.circle.fill")
+                    .font(.system(size: 14))
+                    .foregroundStyle(Theme.junk)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("这些条目都不能在当前构建里操作")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(Theme.label)
+                    Text(reason)
+                        .font(.system(size: 12))
+                        .foregroundStyle(Theme.secondaryLabel)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 11)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Theme.junk.opacity(0.10), in: RoundedRectangle(cornerRadius: Theme.Radius.tile, style: .continuous))
+        }
     }
 
     // MARK: - Controls
