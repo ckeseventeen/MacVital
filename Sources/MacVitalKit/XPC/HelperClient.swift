@@ -29,8 +29,11 @@ public enum HelperStatus: Equatable, Sendable {
 /// Settings and can revoke at any time.
 public actor HelperClient {
     private var connection: NSXPCConnection?
+    private let replyTimeout: TimeInterval
 
-    public init() {}
+    public init(replyTimeout: TimeInterval = 120) {
+        self.replyTimeout = replyTimeout
+    }
 
     // MARK: - Registration
 
@@ -96,11 +99,13 @@ public actor HelperClient {
                 throw HelperError.unverifiedHelper
             }
 
-            new.invalidationHandler = { [weak self] in
-                Task { await self?.clearConnection() }
+            new.invalidationHandler = { [weak self, weak new] in
+                guard let new else { return }
+                Task { await self?.clearConnection(new) }
             }
-            new.interruptionHandler = { [weak self] in
-                Task { await self?.clearConnection() }
+            new.interruptionHandler = { [weak self, weak new] in
+                guard let new else { return }
+                Task { await self?.clearConnection(new) }
             }
             new.resume()
             connection = new
@@ -121,68 +126,56 @@ public actor HelperClient {
     ///
     /// The `resumed` flag is not defensive padding either: XPC can in principle
     /// deliver both, and resuming a checked continuation twice is a crash.
-    /// How long a single helper call may take before the caller gives up.
-    ///
-    /// Generous, because the work is real: `purge` removes a tree, and a move
-    /// that falls back to copy across volumes is not instant. Bounded, because
-    /// the alternative is the hang this whole method exists to prevent — the
-    /// error handler below only fires when the *connection* breaks, and a
-    /// helper that accepts the message and then blocks (a stuck network
-    /// volume, a deadlock on the root side) never trips it. The first version
-    /// of this fix missed that case entirely.
-    private static let replyTimeout: Duration = .seconds(120)
-
     private func call<T: Sendable>(
-        _ body: @escaping @Sendable (MacVitalHelperProtocol, @escaping @Sendable (T) -> Void) -> Void
-    ) async throws -> T {
-        try await withThrowingTaskGroup(of: T.self) { group in
-            group.addTask { try await self.send(body) }
-            group.addTask {
-                try await Task.sleep(for: Self.replyTimeout)
-                throw HelperError.timedOut
-            }
-            guard let result = try await group.next() else { throw HelperError.timedOut }
-            // The losing task is cancelled, but a continuation waiting on XPC
-            // does not observe cancellation — it stays parked until the reply
-            // arrives or the connection dies. That leaks one suspended task in
-            // the timeout case, which is the right trade against leaving the
-            // user looking at a progress bar that will never move.
-            group.cancelAll()
-            return result
-        }
-    }
-
-    private func send<T: Sendable>(
         _ body: @escaping @Sendable (MacVitalHelperProtocol, @escaping @Sendable (T) -> Void) -> Void
     ) async throws -> T {
         let connection = try proxy()
         let resumed = ResumeGuard()
 
         return try await withCheckedThrowingContinuation { continuation in
-            let remote = connection.remoteObjectProxyWithErrorHandler { error in
+            let timeout = DispatchWorkItem { [weak self, weak connection] in
+                guard resumed.claim() else { return }
+                continuation.resume(throwing: HelperError.timedOut)
+                connection?.invalidate()
+                guard let connection else { return }
+                Task { await self?.clearConnection(connection) }
+            }
+            DispatchQueue.global(qos: .utility).asyncAfter(
+                deadline: .now() + replyTimeout,
+                execute: timeout
+            )
+
+            let remote = connection.remoteObjectProxyWithErrorHandler { [weak self, weak connection] error in
                 Log.helper.error("xpc error: \(error.localizedDescription, privacy: .public)")
+                timeout.cancel()
                 guard resumed.claim() else { return }
                 continuation.resume(throwing: HelperError.transport(error.localizedDescription))
+                guard let connection else { return }
+                Task { await self?.clearConnection(connection) }
             }
             guard let typed = remote as? MacVitalHelperProtocol else {
+                timeout.cancel()
                 guard resumed.claim() else { return }
                 continuation.resume(throwing: HelperError.notConnected)
                 return
             }
             body(typed) { value in
+                timeout.cancel()
                 guard resumed.claim() else { return }
                 continuation.resume(returning: value)
             }
         }
     }
 
-    private func clearConnection() {
-        connection?.invalidate()
+    private func clearConnection(_ invalidated: NSXPCConnection) {
+        guard connection === invalidated else { return }
         connection = nil
     }
 
     public func disconnect() {
-        clearConnection()
+        let current = connection
+        connection = nil
+        current?.invalidate()
     }
 
     // MARK: - Operations
@@ -226,7 +219,7 @@ public actor HelperClient {
         _ = try? await call { (remote: MacVitalHelperProtocol, reply: @escaping @Sendable (Bool) -> Void) in
             remote.uninstall { reply($0) }
         }
-        clearConnection()
+        disconnect()
         try? await unregister()
     }
 }

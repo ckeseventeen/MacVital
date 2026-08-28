@@ -69,6 +69,13 @@ public struct InstalledAppIndex: Sendable {
             "/System/Applications/Utilities",
             "/System/Library/CoreServices",
             "\(PathRedaction.home)/Applications",
+            // Apps are often tried in place before being installed. Missing
+            // these makes their live preferences look like abandoned residue.
+            "\(PathRedaction.home)/Downloads",
+            "\(PathRedaction.home)/Desktop",
+            // One-level traversal below discovers apps at a mounted volume's
+            // root without recursively crawling external disks.
+            "/Volumes",
         ].map(URL.init(fileURLWithPath:))
 
         var apps: [App] = []
@@ -102,6 +109,14 @@ public struct InstalledAppIndex: Sendable {
                 }
             }
         }
+
+        #if canImport(AppKit)
+        // The running-process list is authoritative for apps launched from an
+        // unusual path deeper than the bounded directory walk above.
+        for running in NSWorkspace.shared.runningApplications {
+            if let bundleURL = running.bundleURL { record(bundleURL) }
+        }
+        #endif
         return InstalledAppIndex(apps: apps)
     }
 

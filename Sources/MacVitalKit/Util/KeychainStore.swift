@@ -11,17 +11,30 @@ public enum KeychainStore {
     }
 
     public static func set(_ value: String?, for key: Key) {
-        var query: [String: Any] = [
+        let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: key.rawValue,
         ]
-        SecItemDelete(query as CFDictionary)
 
-        guard let value, !value.isEmpty, let data = value.data(using: .utf8) else { return }
-        query[kSecValueData as String] = data
-        query[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
-        let status = SecItemAdd(query as CFDictionary, nil)
+        guard let value, !value.isEmpty, let data = value.data(using: .utf8) else {
+            let status = SecItemDelete(query as CFDictionary)
+            if status != errSecSuccess, status != errSecItemNotFound {
+                Log.app.error("keychain delete failed: \(status, privacy: .public)")
+            }
+            return
+        }
+
+        let attributes: [String: Any] = [
+            kSecValueData as String: data,
+            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
+        ]
+        var status = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
+        if status == errSecItemNotFound {
+            var newItem = query
+            attributes.forEach { newItem[$0.key] = $0.value }
+            status = SecItemAdd(newItem as CFDictionary, nil)
+        }
         if status != errSecSuccess {
             Log.app.error("keychain write failed: \(status, privacy: .public)")
         }

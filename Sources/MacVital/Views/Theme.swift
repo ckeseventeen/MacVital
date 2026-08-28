@@ -93,7 +93,7 @@ enum Theme {
     /// complaint was that the UI felt cramped, and the fix for cramped is
     /// whitespace, not smaller type.
     enum Metric {
-        static let sidebarWidth: CGFloat = 208
+        static let sidebarWidth: CGFloat = 224
         static let pagePaddingH: CGFloat = 36
         static let pagePaddingV: CGFloat = 32
         /// Between major blocks on a page.
@@ -169,5 +169,26 @@ struct GlyphTile: View {
             .foregroundStyle(tint)
             .frame(width: size, height: size)
             .background(tint.opacity(0.14), in: RoundedRectangle(cornerRadius: size * 0.25, style: .continuous))
+    }
+}
+
+/// Reusable label for card groups. The icon gives dense pages a stable visual
+/// landmark without turning every section into another oversized heading.
+struct SectionTitle: View {
+    let title: String
+    let systemImage: String
+    var tint: Color = Theme.accent
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: systemImage)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(tint)
+                .frame(width: 22, height: 22)
+                .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+            Text(title)
+                .font(.system(size: Theme.Text.body, weight: .medium))
+                .foregroundStyle(Theme.label)
+        }
     }
 }

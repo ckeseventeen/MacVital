@@ -1,4 +1,5 @@
 import AppKit
+import MacVitalKit
 
 /// Screen capture, delegated to `/usr/sbin/screencapture`.
 ///
@@ -74,6 +75,10 @@ final class ScreenshotService: ObservableObject {
     private let scratch: URL = FileManager.default.temporaryDirectory
         .appendingPathComponent("MacVital-Screenshots", isDirectory: true)
 
+    init() {
+        Self.pruneStaleFiles(in: scratch)
+    }
+
     // MARK: - Errors
 
     func clearError() {
@@ -141,10 +146,14 @@ final class ScreenshotService: ObservableObject {
         }
 
         guard let image = NSImage(contentsOf: destination) else {
+            try? FileManager.default.removeItem(at: destination)
             fail("截图已保存但无法读取。")
             return
         }
 
+        if let previous = latest?.url, previous != destination {
+            try? FileManager.default.removeItem(at: previous)
+        }
         latest = Capture(
             url: destination,
             image: image,
@@ -175,6 +184,16 @@ final class ScreenshotService: ObservableObject {
     private static func pixelSize(of image: NSImage) -> CGSize? {
         guard let rep = image.representations.first as? NSBitmapImageRep else { return nil }
         return CGSize(width: rep.pixelsWide, height: rep.pixelsHigh)
+    }
+
+    private static func pruneStaleFiles(in directory: URL) {
+        let cutoff = Date().addingTimeInterval(-24 * 60 * 60)
+        for file in FileWalker.children(of: directory) {
+            let modified = (try? file.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
+            if modified.map({ $0 < cutoff }) ?? true {
+                try? FileManager.default.removeItem(at: file)
+            }
+        }
     }
 
     // MARK: - Actions on the latest capture

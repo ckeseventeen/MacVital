@@ -78,4 +78,11 @@ final class ProcessIdentityTests: XCTestCase {
     func testImplausiblePIDIsNotRunning() {
         XCTAssertFalse(RunningProcessIndex.isRunning(pid: 999_999, executablePath: "/bin/sleep"))
     }
+
+    func testPIDEnumerationIncludesTheCurrentProcess() {
+        XCTAssertTrue(
+            RunningProcessIndex.allPIDs().contains(getpid()),
+            "proc_listallpids returns counts, not byte lengths"
+        )
+    }
 }

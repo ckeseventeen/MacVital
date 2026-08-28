@@ -38,7 +38,14 @@ public enum PathRedaction {
     /// Filenames sometimes embed the account name or an email. Used before
     /// sending directory listings to a remote model.
     public static func redactName(_ name: String) -> String {
-        guard !userName.isEmpty else { return name }
-        return name.replacingOccurrences(of: userName, with: "<user>")
+        var result = name.replacingOccurrences(
+            of: #"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}"#,
+            with: "<email>",
+            options: [.regularExpression, .caseInsensitive]
+        )
+        if !userName.isEmpty {
+            result = result.replacingOccurrences(of: userName, with: "<user>")
+        }
+        return result
     }
 }

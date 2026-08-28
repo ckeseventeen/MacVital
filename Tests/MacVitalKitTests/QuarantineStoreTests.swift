@@ -198,6 +198,112 @@ final class QuarantineStoreTests: XCTestCase {
         )
         XCTAssertEqual(record.aiSummary, "这是缓存 会重建")
     }
+
+    func testPendingRestoreIsReconciledAfterTheOriginalReappears() async throws {
+        let root = sandbox.appendingPathComponent("RecoveredRestore", isDirectory: true)
+        let items = root.appendingPathComponent("Items", isDirectory: true)
+        try FileManager.default.createDirectory(at: items, withIntermediateDirectories: true)
+        let id = UUID()
+        let original = sandbox.appendingPathComponent("restored.txt")
+        try Data("restored".utf8).write(to: original)
+        let record = QuarantineRecord(
+            id: id,
+            originalPath: original.path,
+            storedPath: items.appendingPathComponent(id.uuidString).appendingPathComponent("restored.txt").path,
+            displayName: "restored.txt",
+            category: .caches,
+            sizeBytes: 8,
+            purgeAfter: Date().addingTimeInterval(3600),
+            ruleID: "cache.userCaches",
+            rationale: "test",
+            pendingOperation: .restoring
+        )
+        try writeManifest([record], at: root)
+
+        let reopened = QuarantineStore(root: root, retentionDays: 7)
+        let recovered = await reopened.allRecords()
+        XCTAssertTrue(recovered.isEmpty)
+    }
+
+    func testPendingRestoreRemainsWhenBothCopiesExist() async throws {
+        let root = sandbox.appendingPathComponent("AmbiguousRestore", isDirectory: true)
+        let items = root.appendingPathComponent("Items", isDirectory: true)
+        let id = UUID()
+        let container = items.appendingPathComponent(id.uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: container, withIntermediateDirectories: true)
+
+        let stored = container.appendingPathComponent("payload.txt")
+        let original = sandbox.appendingPathComponent("ambiguous.txt")
+        try Data("quarantined".utf8).write(to: stored)
+        try Data("new occupant".utf8).write(to: original)
+
+        let record = QuarantineRecord(
+            id: id,
+            originalPath: original.path,
+            storedPath: stored.path,
+            displayName: "payload.txt",
+            category: .caches,
+            sizeBytes: 11,
+            purgeAfter: Date().addingTimeInterval(3600),
+            ruleID: "cache.userCaches",
+            rationale: "test",
+            pendingOperation: .restoring
+        )
+        try writeManifest([record], at: root)
+
+        let reopened = QuarantineStore(root: root, retentionDays: 7)
+        let recovered = await reopened.allRecords()
+        XCTAssertEqual(recovered.map(\.id), [id])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: stored.path))
+        XCTAssertEqual(try Data(contentsOf: original), Data("new occupant".utf8))
+    }
+
+    func testPendingPurgeIsReconciledAfterTheContainerDisappears() async throws {
+        let root = sandbox.appendingPathComponent("RecoveredPurge", isDirectory: true)
+        let items = root.appendingPathComponent("Items", isDirectory: true)
+        try FileManager.default.createDirectory(at: items, withIntermediateDirectories: true)
+        let id = UUID()
+        let record = QuarantineRecord(
+            id: id,
+            originalPath: sandbox.appendingPathComponent("gone.txt").path,
+            storedPath: items.appendingPathComponent(id.uuidString).appendingPathComponent("gone.txt").path,
+            displayName: "gone.txt",
+            category: .caches,
+            sizeBytes: 8,
+            purgeAfter: Date().addingTimeInterval(3600),
+            ruleID: "cache.userCaches",
+            rationale: "test",
+            pendingOperation: .purging
+        )
+        try writeManifest([record], at: root)
+
+        let reopened = QuarantineStore(root: root, retentionDays: 7)
+        let recovered = await reopened.allRecords()
+        XCTAssertTrue(recovered.isEmpty)
+    }
+
+    private func writeManifest(_ records: [QuarantineRecord], at root: URL) throws {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        try encoder.encode(records).write(
+            to: root.appendingPathComponent("manifest.json"),
+            options: .atomic
+        )
+    }
+
+    func testCopyFallbackAcceptsOnlyCrossDeviceErrors() {
+        let crossDevice = NSError(domain: NSPOSIXErrorDomain, code: Int(EXDEV))
+        let wrapped = NSError(
+            domain: NSCocoaErrorDomain,
+            code: NSFileWriteUnknownError,
+            userInfo: [NSUnderlyingErrorKey: crossDevice]
+        )
+        XCTAssertTrue(QuarantineStore.isCrossDeviceError(crossDevice))
+        XCTAssertTrue(QuarantineStore.isCrossDeviceError(wrapped))
+        XCTAssertFalse(QuarantineStore.isCrossDeviceError(
+            NSError(domain: NSPOSIXErrorDomain, code: Int(EACCES))
+        ))
+    }
 }
 
 /// A retention value the test can change between calls, standing in for the
@@ -391,7 +497,12 @@ final class QuarantineRollbackTests: XCTestCase {
                 decision: .privileged("residue.systemLaunchDaemons", "test"),
                 assessment: nil,
                 privilegedMove: { from, to in
+                    try FileManager.default.createDirectory(
+                        at: URL(fileURLWithPath: to).deletingLastPathComponent(),
+                        withIntermediateDirectories: true
+                    )
                     try FileManager.default.moveItem(atPath: from, toPath: to)
+                    return to
                 }
             )
             XCTFail("expected the manifest write to fail")

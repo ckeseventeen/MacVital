@@ -50,7 +50,8 @@ public struct CleanupCoordinator: Sendable {
         let engine = RuleEngine(
             rules: rules,
             processIndex: RunningProcessIndex.snapshot(),
-            selfProtectedPrefixes: [quarantineRoot]
+            selfProtectedPrefixes: [quarantineRoot],
+            removalCheckLimit: nil
         )
 
         // Input 3: user authorisation. Start from the selection, not from the
@@ -72,6 +73,15 @@ public struct CleanupCoordinator: Sendable {
                 continue
             }
 
+            if finding.item.category == .duplicateFiles,
+               !DuplicateFileScanner.isStillDuplicate(finding.item) {
+                skipped.append((
+                    finding.item,
+                    "文件或保留副本在扫描后发生变化，已重新校验并取消隔离。"
+                ))
+                continue
+            }
+
             do {
                 let record = try await store.store(
                     item: finding.item,
@@ -85,23 +95,10 @@ public struct CleanupCoordinator: Sendable {
                         if let message = result.failures[source] {
                             throw HelperError.remote(message)
                         }
-                        // The helper allocates its own container under Items/
-                        // and reports where the item landed. Move it into the
-                        // container the store already created for this record,
-                        // then take the helper's now-empty one away — otherwise
-                        // every privileged removal leaves a stray directory
-                        // that nothing owns and the sweep never visits.
-                        if let landed = result.moved[source], landed != destination {
-                            let orphan = URL(fileURLWithPath: landed).deletingLastPathComponent()
-                            try FileManager.default.moveItem(
-                                at: URL(fileURLWithPath: landed),
-                                to: URL(fileURLWithPath: destination)
-                            )
-                            if orphan.path.hasPrefix(quarantineRoot + "/"),
-                               (try? FileManager.default.contentsOfDirectory(atPath: orphan.path))?.isEmpty == true {
-                                try? FileManager.default.removeItem(at: orphan)
-                            }
+                        guard let landed = result.moved[source] else {
+                            throw HelperError.remote("特权助手未返回隔离位置")
                         }
+                        return landed
                     }
                 )
                 removed.append(record)
@@ -129,6 +126,14 @@ public struct CleanupCoordinator: Sendable {
         let root = store.root.path
         try await store.purge(id: record.id) { paths in
             let failures = try await helper.purge(storedPaths: paths, quarantineRoot: root)
+            if let first = failures.values.first { throw HelperError.remote(first) }
+        }
+    }
+
+    public func discardOrphans(paths: Set<String>) async -> (removed: Int, bytes: Int64) {
+        let root = store.root.path
+        return await store.discardOrphans(paths: paths) { orphanPaths in
+            let failures = try await helper.purge(storedPaths: orphanPaths, quarantineRoot: root)
             if let first = failures.values.first { throw HelperError.remote(first) }
         }
     }

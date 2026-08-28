@@ -9,7 +9,8 @@ struct WhiteboardPage: View {
             VStack(alignment: .leading, spacing: 16) {
                 PageHeader(
                     title: "白板",
-                    subtitle: "\(model.boards.count) 块白板 · 可导入图片、导出 PNG 或 PDF"
+                    subtitle: "\(model.boards.count) 块白板 · 可导入图片、导出 PNG 或 PDF",
+                    systemImage: "rectangle.on.rectangle"
                 ) {
                     Menu("导出") {
                         ForEach(WhiteboardViewModel.ExportFormat.allCases) { format in

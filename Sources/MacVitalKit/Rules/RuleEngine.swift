@@ -24,18 +24,23 @@ public struct RuleEngine: Sendable {
     /// fails — and the honest verdict for those paths is `deny`, not
     /// `allowWithPrivilege`. Injectable so tests can exercise both worlds.
     public let privilegedRemovalPossible: Bool
+    /// Scan-time evaluation is bounded; cleanup constructs an engine with
+    /// `nil` so a blocker beyond the first 2,048 entries cannot be missed.
+    public let removalCheckLimit: Int?
 
     public init(
         rules: RuleIndex,
         protectedPaths: ProtectedPaths = ProtectedPaths(),
         processIndex: RunningProcessIndex,
         selfProtectedPrefixes: [String] = [],
-        privilegedRemovalPossible: Bool = HelperClient.isSupportedByThisBuild
+        privilegedRemovalPossible: Bool = HelperClient.isSupportedByThisBuild,
+        removalCheckLimit: Int? = 2048
     ) {
         self.rules = rules
         self.protectedPaths = protectedPaths
         self.processIndex = processIndex
         self.privilegedRemovalPossible = privilegedRemovalPossible
+        self.removalCheckLimit = removalCheckLimit
         // Normalised on the way in: the prefixes are compared against
         // realpath-resolved candidates, so an unnormalised /var/... prefix
         // would silently never match its own /private/var/... contents.
@@ -112,7 +117,7 @@ public struct RuleEngine: Sendable {
         //     the tree back out. The user had to find the offending directory
         //     by hand. Refusing up front is the only version of this that does
         //     not strand data.
-        if let blocker = SIPGuard.removalBlocker(at: resolved) {
+        if let blocker = SIPGuard.removalBlocker(at: resolved, maxEntries: removalCheckLimit) {
             // Root-owned content is the one blocker root gets past, so a rule
             // that already routes through the helper is not blocked by it.
             //
@@ -179,7 +184,7 @@ public struct RuleEngine: Sendable {
         //    question is whether it needs root — and whether root is reachable.
         //
         //    Only `requiresPrivilege` rules may route here, and that is not a
-        //    stylistic choice: `HelperService.validatedRemovalDestination`
+        //    stylistic choice: `HelperService.validatedRulePath`
         //    accepts a path only when a `requiresPrivilege` rule in the shared
         //    catalog matches it. Sending anything else to the helper produces a
         //    guaranteed "没有匹配的特权清理规则" — a button that fails every

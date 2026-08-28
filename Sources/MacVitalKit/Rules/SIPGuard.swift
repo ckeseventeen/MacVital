@@ -127,9 +127,9 @@ public enum SIPGuard {
     /// The user had to find the offending directory by hand and `chmod u+w` it.
     ///
     /// One walk covers both this and the ACL question so a candidate is not
-    /// traversed twice. Bounded: a partial answer that catches the common
-    /// shapes beats doubling the cost of every scan.
-    public static func removalBlocker(at path: String, maxEntries: Int = 2048) -> RemovalBlocker? {
+    /// traversed twice. Scans use a bound for responsiveness; the execution
+    /// gate passes `nil` and checks the complete tree before moving anything.
+    public static func removalBlocker(at path: String, maxEntries: Int? = 2048) -> RemovalBlocker? {
         if entryDeniesDelete(path) { return .deleteDenyACL(path: path) }
 
         var isDirectory: ObjCBool = false
@@ -143,7 +143,7 @@ public enum SIPGuard {
         var visited = 0
         for case let relative as String in enumerator {
             visited += 1
-            if visited > maxEntries { break }
+            if let maxEntries, visited > maxEntries { break }
 
             let child = (path as NSString).appendingPathComponent(relative)
             // Symlinks are unlinked, never followed — the target's permissions
@@ -165,11 +165,23 @@ public enum SIPGuard {
         guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory),
               isDirectory.boolValue
         else { return nil }
+
+        let contents: [String]
+        do {
+            contents = try FileManager.default.contentsOfDirectory(atPath: path)
+        } catch {
+            // Recursive deletion must enumerate the directory. Treating a
+            // failed listing as `[]` declared it empty and allowed a tree that
+            // purge could not actually traverse into quarantine.
+            return ownershipBlocker(at: path)
+        }
+        guard !contents.isEmpty else { return nil }
         guard access(path, W_OK) != 0 else { return nil }
 
-        let contents = (try? FileManager.default.contentsOfDirectory(atPath: path)) ?? []
-        guard !contents.isEmpty else { return nil }
+        return ownershipBlocker(at: path)
+    }
 
+    private static func ownershipBlocker(at path: String) -> RemovalBlocker {
         // Who owns it decides what the user should be told. An installer that
         // ran as root leaves `root:wheel` directories behind — `/Applications`
         // is full of them — and sending the user to `chmod u+w` for those is

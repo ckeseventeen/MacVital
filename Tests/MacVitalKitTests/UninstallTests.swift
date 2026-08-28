@@ -167,6 +167,43 @@ final class UninstallNameMatchingTests: XCTestCase {
 
 final class AppUninstallPlannerTests: XCTestCase {
 
+    func testInstalledDottedSiblingIsExcludedFromThePlan() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MacVitalSibling-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let preferences = root.appendingPathComponent("Library/Preferences", isDirectory: true)
+        try FileManager.default.createDirectory(at: preferences, withIntermediateDirectories: true)
+        let targetPreference = preferences.appendingPathComponent("com.acme.Editor.plist")
+        let siblingPreference = preferences.appendingPathComponent("com.acme.Editor.Pro.plist")
+        try Data("target".utf8).write(to: targetPreference)
+        try Data("sibling".utf8).write(to: siblingPreference)
+
+        let targetBundle = root.appendingPathComponent("Applications/Editor.app", isDirectory: true)
+        let siblingBundle = root.appendingPathComponent("Applications/Editor Pro.app", isDirectory: true)
+        try FileManager.default.createDirectory(at: targetBundle, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: siblingBundle, withIntermediateDirectories: true)
+
+        let target = InstalledAppIndex.App(
+            bundleIdentifier: "com.acme.Editor",
+            name: "Editor",
+            path: targetBundle.path
+        )
+        let sibling = InstalledAppIndex.App(
+            bundleIdentifier: "com.acme.Editor.Pro",
+            name: "Editor Pro",
+            path: siblingBundle.path
+        )
+        let paths = Set(
+            AppUninstallPlanner(home: root.path)
+                .plan(for: target, installedApps: [target, sibling])
+                .map(\.item.path)
+        )
+
+        XCTAssertTrue(paths.contains(ProtectedPaths.normalize(targetPreference.path)))
+        XCTAssertFalse(paths.contains(ProtectedPaths.normalize(siblingPreference.path)))
+    }
+
     /// The planner grants nothing on its own — every path it proposes is tagged
     /// with a rule that already exists in the catalog, and `RuleEngine` derives
     /// permission from that. A renamed rule would make the uninstaller silently

@@ -45,12 +45,22 @@ public struct CloudAdvisor: AIAdvisor {
             throw AdvisorError.notConfigured("未设置 Anthropic API Key")
         }
 
+        // A local model may use a short printable head for attribution, but a
+        // cloud request must match the UI promise of "metadata only". Config
+        // heads can contain tokens even when the path itself is redacted.
+        let cloudSafeBatch = batch.map(Self.removingFileContents)
         var merged: [UUID: AIAssessment] = [:]
-        for chunk in batch.chunked(into: configuration.batchSize) {
+        for chunk in cloudSafeBatch.chunked(into: configuration.batchSize) {
             if Task.isCancelled { throw CancellationError() }
             merged.merge(try await request(chunk)) { _, new in new }
         }
         return merged
+    }
+
+    static func removingFileContents(_ evidence: AIEvidence) -> AIEvidence {
+        var sanitized = evidence
+        sanitized.headSnippet = nil
+        return sanitized
     }
 
     // MARK: - Transport

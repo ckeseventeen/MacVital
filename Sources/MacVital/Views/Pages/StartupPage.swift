@@ -22,7 +22,7 @@ struct StartupPage: View {
     var body: some View {
         VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 18) {
-                PageHeader(title: "开机启动项", subtitle: subtitle) {
+                PageHeader(title: "开机启动项", subtitle: subtitle, systemImage: "power") {
                     Button("刷新") { Task { await model.reload() } }
                         .buttonStyle(.bordered)
                         .disabled(model.isLoading)

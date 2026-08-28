@@ -75,6 +75,10 @@ final class ScanViewModel: ObservableObject {
     // MARK: - Scan
 
     func startScan() async {
+        // Cleanup mutates the same findings and filesystem. Starting a scan
+        // from the menu-bar command while cleanup is suspended would let the
+        // two operations overwrite each other's phase and rows.
+        guard !isCleaning else { return }
         scanTask?.cancel()
         scanGeneration += 1
         let generation = scanGeneration
@@ -227,7 +231,7 @@ final class ScanViewModel: ObservableObject {
     // MARK: - Clean
 
     func performCleanup() async {
-        guard !selection.isEmpty else { return }
+        guard phase == .results, !selection.isEmpty else { return }
         phase = .cleaning
         cleanupProgress = (0, selection.count)
 

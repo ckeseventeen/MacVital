@@ -48,7 +48,7 @@ struct JunkCleanerPage: View {
     // MARK: - Header
 
     private var header: some View {
-        PageHeader(title: "垃圾清理", subtitle: subtitle) {
+        PageHeader(title: "垃圾清理", subtitle: subtitle, systemImage: "sparkles") {
             HStack(spacing: 10) {
                 scopeMenu
                 Button(model.isScanning ? "扫描中…" : "重新扫描") {

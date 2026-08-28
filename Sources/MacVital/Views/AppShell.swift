@@ -29,14 +29,14 @@ enum AppPage: String, CaseIterable, Identifiable {
 
     var symbolName: String {
         switch self {
-        case .dashboard: return "house"
-        case .junk: return "trash"
-        case .uninstall: return "square.grid.2x2"
+        case .dashboard: return "gauge"
+        case .junk: return "sparkles"
+        case .uninstall: return "app.badge.checkmark"
         case .startup: return "power"
         case .screenshot: return "camera.viewfinder"
         case .record: return "record.circle"
-        case .annotate: return "pencil.tip"
-        case .whiteboard: return "square.on.square"
+        case .annotate: return "pencil.and.outline"
+        case .whiteboard: return "rectangle.on.rectangle"
         }
     }
 }
@@ -101,18 +101,35 @@ struct AppShell: View {
     }
 
     private var nav: some View {
-        VStack(spacing: 4) {
-            ForEach(AppPage.allCases) { page in
-                NavRow(
-                    page: page,
-                    isActive: environment.page == page,
-                    badge: badge(for: page)
-                ) {
-                    environment.page = page
-                }
-            }
+        VStack(alignment: .leading, spacing: 14) {
+            navRow(.dashboard)
+            navSection("维护", pages: [.junk, .uninstall, .startup])
+            navSection("捕获", pages: [.screenshot, .record])
+            navSection("创作", pages: [.annotate, .whiteboard])
         }
         .padding(.horizontal, 12)
+    }
+
+    private func navSection(_ title: String, pages: [AppPage]) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.system(size: 10, weight: .semibold))
+                .tracking(0.7)
+                .foregroundStyle(Theme.tertiaryLabel)
+                .padding(.leading, 11)
+                .accessibilityAddTraits(.isHeader)
+            ForEach(pages) { navRow($0) }
+        }
+    }
+
+    private func navRow(_ page: AppPage) -> some View {
+        NavRow(
+            page: page,
+            isActive: environment.page == page,
+            badge: badge(for: page)
+        ) {
+            environment.page = page
+        }
     }
 
     private func badge(for page: AppPage) -> String? {
@@ -206,10 +223,15 @@ private struct NavRow: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 10) {
+            HStack(spacing: 9) {
                 Image(systemName: page.symbolName)
-                    .font(.system(size: 14, weight: .regular))
-                    .frame(width: 16)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(isActive ? Color.white : Theme.secondaryLabel)
+                    .frame(width: 27, height: 27)
+                    .background(
+                        isActive ? Theme.accent : Theme.well,
+                        in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    )
                 Text(page.title)
                     .font(.system(size: 14, weight: isActive ? .medium : .regular))
                 Spacer(minLength: 4)
@@ -217,12 +239,12 @@ private struct NavRow: View {
                     Text(badge)
                         .font(.system(size: 11, weight: .medium))
                         .monospacedDigit()
-                        .foregroundStyle(isActive ? .white.opacity(0.85) : Theme.secondaryLabel)
+                        .foregroundStyle(isActive ? Theme.accent : Theme.secondaryLabel)
                 }
             }
-            .foregroundStyle(isActive ? Theme.accent : Theme.secondaryLabel)
-            .padding(.horizontal, 11)
-            .padding(.vertical, 9)
+            .foregroundStyle(isActive ? Theme.label : Theme.secondaryLabel)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 5)
             .background(
                 RoundedMarker(isActive: isActive, isHovering: isHovering)
             )
@@ -253,26 +275,55 @@ private struct RoundedMarker: View {
 struct PageHeader<Trailing: View>: View {
     let title: String
     let subtitle: String
+    var systemImage: String?
     @ViewBuilder var trailing: Trailing
 
+    init(
+        title: String,
+        subtitle: String,
+        systemImage: String? = nil,
+        @ViewBuilder trailing: () -> Trailing
+    ) {
+        self.title = title
+        self.subtitle = subtitle
+        self.systemImage = systemImage
+        self.trailing = trailing()
+    }
+
     var body: some View {
-        HStack(alignment: .center) {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .center, spacing: 14) {
+                titleBlock
+                Spacer(minLength: 12)
+                trailing
+            }
+            VStack(alignment: .leading, spacing: 12) {
+                titleBlock
+                trailing
+            }
+        }
+    }
+
+    private var titleBlock: some View {
+        HStack(spacing: 12) {
+            if let systemImage {
+                GlyphTile(systemImage: systemImage, tint: Theme.accent, size: 38)
+            }
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
-                    .font(.system(size: 23, weight: .medium))
+                    .font(.system(size: Theme.Text.title, weight: .medium))
                     .foregroundStyle(Theme.label)
                 Text(subtitle)
-                    .font(.system(size: 13))
+                    .font(.system(size: Theme.Text.caption))
                     .foregroundStyle(Theme.secondaryLabel)
+                    .lineLimit(2)
             }
-            Spacer(minLength: 12)
-            trailing
         }
     }
 }
 
 extension PageHeader where Trailing == EmptyView {
-    init(title: String, subtitle: String) {
-        self.init(title: title, subtitle: subtitle) { EmptyView() }
+    init(title: String, subtitle: String, systemImage: String? = nil) {
+        self.init(title: title, subtitle: subtitle, systemImage: systemImage) { EmptyView() }
     }
 }

@@ -48,4 +48,47 @@ final class DuplicateIdentityTests: XCTestCase {
         let missing = sandbox.appendingPathComponent("gone.bin")
         XCTAssertEqual(DuplicateFileScanner.distinctFiles([missing]).count, 1)
     }
+
+    func testExecutionRevalidationAcceptsTwoUnchangedCopies() throws {
+        let keeper = sandbox.appendingPathComponent("keeper.bin")
+        let duplicate = sandbox.appendingPathComponent("duplicate.bin")
+        let bytes = Data(repeating: 0xA7, count: 16_384)
+        try bytes.write(to: keeper)
+        try bytes.write(to: duplicate)
+        let digest = try XCTUnwrap(DuplicateFileScanner.fullDigest(of: keeper))
+
+        let item = ScanItem(
+            path: duplicate.path,
+            category: .duplicateFiles,
+            ruleID: "file.duplicate.downloads",
+            kindHint: "副本",
+            sizeBytes: Int64(bytes.count),
+            isDirectory: false,
+            groupKey: digest,
+            duplicateKeeperPath: keeper.path
+        )
+        XCTAssertTrue(DuplicateFileScanner.isStillDuplicate(item))
+    }
+
+    func testExecutionRevalidationRejectsAChangedKeeper() throws {
+        let keeper = sandbox.appendingPathComponent("keeper.bin")
+        let duplicate = sandbox.appendingPathComponent("duplicate.bin")
+        let bytes = Data(repeating: 0xA7, count: 16_384)
+        try bytes.write(to: keeper)
+        try bytes.write(to: duplicate)
+        let digest = try XCTUnwrap(DuplicateFileScanner.fullDigest(of: keeper))
+        try Data(repeating: 0xB8, count: bytes.count).write(to: keeper)
+
+        let item = ScanItem(
+            path: duplicate.path,
+            category: .duplicateFiles,
+            ruleID: "file.duplicate.downloads",
+            kindHint: "副本",
+            sizeBytes: Int64(bytes.count),
+            isDirectory: false,
+            groupKey: digest,
+            duplicateKeeperPath: keeper.path
+        )
+        XCTAssertFalse(DuplicateFileScanner.isStillDuplicate(item))
+    }
 }

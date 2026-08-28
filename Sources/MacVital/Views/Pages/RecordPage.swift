@@ -17,7 +17,7 @@ struct RecordPage: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: Theme.Metric.sectionSpacing) {
-                PageHeader(title: "录屏与直播", subtitle: subtitle)
+                PageHeader(title: "录屏与直播", subtitle: subtitle, systemImage: "record.circle")
                 recordCard
                 if let latest = recorder.latest { resultCard(latest) }
                 liveCard

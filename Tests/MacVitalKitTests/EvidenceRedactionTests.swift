@@ -104,4 +104,29 @@ final class EvidenceRedactionTests: XCTestCase {
         XCTAssertFalse(message.contains("sk-live-000"))
         XCTAssertFalse(message.contains("head:"))
     }
+
+    func testCloudAdvisorAlwaysStripsHeadSnippets() {
+        let evidence = AIEvidence(
+            itemID: UUID(),
+            redactedPath: "~/Library/Application Support/Vendor/config",
+            kindHint: "配置",
+            ruleRationale: "test",
+            sizeBytes: 10,
+            fileCount: 1,
+            isDirectory: false,
+            ageInDays: 1,
+            headSnippet: "API_TOKEN=secret"
+        )
+
+        let sanitized = CloudAdvisor.removingFileContents(evidence)
+        XCTAssertNil(sanitized.headSnippet)
+        XCTAssertFalse(PromptBuilder.userMessage(for: [sanitized]).contains("secret"))
+    }
+
+    func testEmailAddressesInChildNamesAreRedacted() {
+        let redacted = PathRedaction.redactName("profile-(jane.doe+work@example.co.uk).json")
+        XCTAssertEqual(redacted, "profile-(<email>).json")
+        XCTAssertFalse(redacted.contains("jane"))
+        XCTAssertFalse(redacted.contains("example"))
+    }
 }

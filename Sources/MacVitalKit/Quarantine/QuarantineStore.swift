@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 /// Nothing is ever deleted directly. Every removal is a move into this store,
@@ -95,7 +96,12 @@ public actor QuarantineStore {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         do {
-            records = try decoder.decode([QuarantineRecord].self, from: data)
+            let decoded = try decoder.decode([QuarantineRecord].self, from: data)
+            guard decoded.allSatisfy({ isValidStoredPath($0) }) else {
+                throw QuarantineError.manifestUnreadable("清单包含隔离区之外或编号不匹配的路径")
+            }
+            records = decoded
+            reconcilePendingOperations()
         } catch {
             manifestUnreadable = error.localizedDescription
             let backup = manifestURL.deletingLastPathComponent()
@@ -126,12 +132,16 @@ public actor QuarantineStore {
 
     public func allRecords() -> [QuarantineRecord] {
         loadIfNeeded()
-        return records.sorted { $0.quarantinedAt > $1.quarantinedAt }
+        return records
+            .filter { $0.pendingOperation == nil }
+            .sorted { $0.quarantinedAt > $1.quarantinedAt }
     }
 
     public func totalBytes() -> Int64 {
         loadIfNeeded()
-        return records.reduce(0) { $0 + $1.sizeBytes }
+        return records
+            .filter { $0.pendingOperation == nil }
+            .reduce(0) { $0 + $1.sizeBytes }
     }
 
     // MARK: - Store
@@ -143,7 +153,7 @@ public actor QuarantineStore {
         item: ScanItem,
         decision: RuleDecision,
         assessment: AIAssessment?,
-        privilegedMove: ((_ source: String, _ destination: String) async throws -> Void)? = nil
+        privilegedMove: ((_ source: String, _ suggestedDestination: String) async throws -> String)? = nil
     ) async throws -> QuarantineRecord {
         try prepare()
 
@@ -152,10 +162,9 @@ public actor QuarantineStore {
             throw QuarantineError.sourceMissing(item.path)
         }
 
-        let recordID = UUID()
-        let container = itemsDirectory.appendingPathComponent(recordID.uuidString, isDirectory: true)
-        try FileManager.default.createDirectory(at: container, withIntermediateDirectories: true)
-        let destination = container.appendingPathComponent(source.lastPathComponent)
+        var recordID = UUID()
+        var container = itemsDirectory.appendingPathComponent(recordID.uuidString, isDirectory: true)
+        var destination = container.appendingPathComponent(source.lastPathComponent)
 
         // A failed move must not leave its container behind. The sweep only
         // ever visits directories named by a manifest record, so an orphan
@@ -163,12 +172,24 @@ public actor QuarantineStore {
         do {
             if decision.admission == .allowWithPrivilege {
                 guard let privilegedMove else { throw QuarantineError.privilegeRequired }
-                try await privilegedMove(source.path, destination.path)
+                let landed = URL(fileURLWithPath: try await privilegedMove(source.path, destination.path))
+                container = landed.deletingLastPathComponent()
+                guard container.deletingLastPathComponent().standardizedFileURL == itemsDirectory.standardizedFileURL,
+                      let helperID = UUID(uuidString: container.lastPathComponent),
+                      landed.lastPathComponent == source.lastPathComponent
+                else {
+                    throw QuarantineError.moveFailed("特权助手返回了异常的隔离路径")
+                }
+                recordID = helperID
+                destination = landed
             } else {
+                try FileManager.default.createDirectory(at: container, withIntermediateDirectories: false)
                 try moveOrCopy(from: source, to: destination)
             }
         } catch {
-            try? FileManager.default.removeItem(at: container)
+            if decision.admission != .allowWithPrivilege {
+                try? FileManager.default.removeItem(at: container)
+            }
             throw error
         }
 
@@ -235,10 +256,16 @@ public actor QuarantineStore {
             throw QuarantineError.recordNotFound
         }
         let record = records[index]
+        guard record.pendingOperation == nil, isValidStoredPath(record) else {
+            throw QuarantineError.moveFailed("隔离记录正在处理或路径异常")
+        }
         let stored = URL(fileURLWithPath: record.storedPath)
         let original = URL(fileURLWithPath: record.originalPath)
 
-        guard FileManager.default.fileExists(atPath: stored.path) else {
+        let sourceExists = record.usedPrivilegedHelper
+            ? FileManager.default.fileExists(atPath: stored.deletingLastPathComponent().path)
+            : FileManager.default.fileExists(atPath: stored.path)
+        guard sourceExists else {
             throw QuarantineError.sourceMissing(record.storedPath)
         }
         // Never overwrite. If something new is at the original path, the user
@@ -248,18 +275,26 @@ public actor QuarantineStore {
             throw QuarantineError.destinationOccupied(record.originalPath)
         }
 
-        let parent = original.deletingLastPathComponent()
-        if record.usedPrivilegedHelper {
-            guard let privilegedMove else { throw QuarantineError.privilegeRequired }
-            try await privilegedMove(stored.path, original.path)
-        } else {
-            try? FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
-            try moveOrCopy(from: stored, to: original)
+        records[index].pendingOperation = .restoring
+        try persist()
+
+        do {
+            let parent = original.deletingLastPathComponent()
+            if record.usedPrivilegedHelper {
+                guard let privilegedMove else { throw QuarantineError.privilegeRequired }
+                try await privilegedMove(stored.path, original.path)
+            } else {
+                try? FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
+                try moveOrCopy(from: stored, to: original)
+            }
+        } catch {
+            clearPendingOperation(for: id)
+            throw error
         }
 
         try? FileManager.default.removeItem(at: stored.deletingLastPathComponent())
-        records.remove(at: index)
-        try persist()
+        records.removeAll { $0.id == id }
+        persistCompletedOperation("restore", id: id)
         Log.quarantine.info("restored \(Log.path(record.originalPath), privacy: .public)")
     }
 
@@ -275,9 +310,20 @@ public actor QuarantineStore {
             throw QuarantineError.recordNotFound
         }
         let record = records[index]
-        try await remove(record: record, privilegedDelete: privilegedDelete)
-        records.remove(at: index)
+        guard record.pendingOperation == nil, isValidStoredPath(record) else {
+            throw QuarantineError.moveFailed("隔离记录正在处理或路径异常")
+        }
+
+        records[index].pendingOperation = .purging
         try persist()
+        do {
+            try await remove(record: record, privilegedDelete: privilegedDelete)
+        } catch {
+            clearPendingOperation(for: id)
+            throw error
+        }
+        records.removeAll { $0.id == id }
+        persistCompletedOperation("purge", id: id)
     }
 
     /// The 7-day timer. Called on launch and periodically thereafter.
@@ -286,24 +332,22 @@ public actor QuarantineStore {
         privilegedDelete: ((_ paths: [String]) async throws -> Void)? = nil
     ) async -> Int {
         loadIfNeeded()
-        let expired = records.filter(\.isExpired)
+        let expired = records.filter { $0.pendingOperation == nil && $0.isExpired }
         guard !expired.isEmpty else { return 0 }
 
         var purged = 0
         for record in expired {
             do {
+                guard let index = records.firstIndex(where: { $0.id == record.id }) else { continue }
+                records[index].pendingOperation = .purging
+                try persist()
                 try await remove(record: record, privilegedDelete: privilegedDelete)
                 records.removeAll { $0.id == record.id }
+                persistCompletedOperation("sweep", id: record.id)
                 purged += 1
             } catch {
+                clearPendingOperation(for: record.id)
                 Log.quarantine.error("sweep failed for \(record.id, privacy: .public): \(error.localizedDescription, privacy: .public)")
-            }
-        }
-        if purged > 0 {
-            do {
-                try persist()
-            } catch {
-                Log.quarantine.error("sweep could not persist: \(error.localizedDescription, privacy: .public)")
             }
         }
         Log.quarantine.info("swept \(purged, privacy: .public) expired records")
@@ -358,7 +402,10 @@ public actor QuarantineStore {
     /// Delete orphan containers. Re-derives the orphan set rather than trusting
     /// the caller's list, so a stale UI cannot name a live record's container.
     @discardableResult
-    public func discardOrphans(paths: Set<String>) -> (removed: Int, bytes: Int64) {
+    public func discardOrphans(
+        paths: Set<String>,
+        privilegedDelete: ((_ paths: [String]) async throws -> Void)? = nil
+    ) async -> (removed: Int, bytes: Int64) {
         let orphans = orphanedContainers().filter { paths.contains($0.path) }
         var removed = 0
         var bytes: Int64 = 0
@@ -369,7 +416,18 @@ public actor QuarantineStore {
                 removed += 1
                 bytes += orphan.sizeBytes
             } catch {
-                Log.quarantine.error("could not remove orphan: \(error.localizedDescription, privacy: .public)")
+                let localError = error
+                guard let privilegedDelete else {
+                    Log.quarantine.error("could not remove orphan: \(localError.localizedDescription, privacy: .public)")
+                    continue
+                }
+                do {
+                    try await privilegedDelete([orphan.path])
+                    removed += 1
+                    bytes += orphan.sizeBytes
+                } catch {
+                    Log.quarantine.error("could not remove orphan locally (\(localError.localizedDescription, privacy: .public)) or with helper (\(error.localizedDescription, privacy: .public))")
+                }
             }
         }
         Log.quarantine.info("discarded \(removed, privacy: .public) orphan containers")
@@ -380,11 +438,10 @@ public actor QuarantineStore {
         record: QuarantineRecord,
         privilegedDelete: ((_ paths: [String]) async throws -> Void)?
     ) async throws {
-        let container = URL(fileURLWithPath: record.storedPath).deletingLastPathComponent()
-        // Sanity check: only ever delete inside our own Items directory.
-        guard container.path.hasPrefix(itemsDirectory.path + "/") else {
+        guard isValidStoredPath(record) else {
             throw QuarantineError.moveFailed("隔离记录路径异常，拒绝删除")
         }
+        let container = URL(fileURLWithPath: record.storedPath).deletingLastPathComponent()
         do {
             try FileManager.default.removeItem(at: container)
         } catch {
@@ -435,6 +492,79 @@ public actor QuarantineStore {
 
     // MARK: - Helpers
 
+    private func isValidStoredPath(_ record: QuarantineRecord) -> Bool {
+        let stored = URL(fileURLWithPath: record.storedPath).standardizedFileURL
+        let container = stored.deletingLastPathComponent()
+        guard !stored.lastPathComponent.isEmpty,
+              container.deletingLastPathComponent() == itemsDirectory.standardizedFileURL,
+              container.lastPathComponent == record.id.uuidString
+        else { return false }
+        return true
+    }
+
+    /// Resolve durable intent after a crash or a failed final manifest write.
+    /// The pre-operation marker means absence/presence is enough to determine
+    /// which side committed; ambiguous states remain visible and actionable.
+    private func reconcilePendingOperations() {
+        var changed = false
+        // Iterate over a snapshot because successful reconciliation removes
+        // entries from the live manifest array.
+        for record in records.filter({ $0.pendingOperation != nil }) {
+            let container = URL(fileURLWithPath: record.storedPath).deletingLastPathComponent()
+            let containerExists = FileManager.default.fileExists(atPath: container.path)
+            let originalExists = FileManager.default.fileExists(atPath: record.originalPath)
+            let storedItemExists = FileManager.default.fileExists(atPath: record.storedPath)
+            let sourceStillExists = record.usedPrivilegedHelper ? containerExists : storedItemExists
+
+            switch record.pendingOperation {
+            case .purging where !containerExists:
+                records.removeAll { $0.id == record.id }
+                changed = true
+            // Seeing something at the destination alone is not proof: another
+            // process may have recreated it after the preflight check. A
+            // restore committed only when the quarantined source disappeared.
+            case .restoring where originalExists && !sourceStillExists:
+                records.removeAll { $0.id == record.id }
+                changed = true
+            case .purging, .restoring:
+                if let index = records.firstIndex(where: { $0.id == record.id }) {
+                    records[index].pendingOperation = nil
+                    changed = true
+                }
+            case nil:
+                break
+            }
+        }
+        guard changed else { return }
+        do {
+            try persist()
+        } catch {
+            Log.quarantine.error("could not persist reconciled manifest: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    private func clearPendingOperation(for id: UUID) {
+        if let index = records.firstIndex(where: { $0.id == id }) {
+            records[index].pendingOperation = nil
+        }
+        do {
+            try persist()
+        } catch {
+            Log.quarantine.error("could not clear pending operation for \(id, privacy: .public): \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    /// Failure here is recoverable: the on-disk manifest still contains the
+    /// pending marker written before the filesystem mutation, so next launch
+    /// reconciles it instead of resurrecting a stale record.
+    private func persistCompletedOperation(_ operation: String, id: UUID) {
+        do {
+            try persist()
+        } catch {
+            Log.quarantine.error("\(operation, privacy: .public) completed for \(id, privacy: .public); pending manifest will reconcile on next launch: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
     /// `moveItem` fails across volumes (EXDEV). Fall back to copy + remove so
     /// an external disk does not break the flow.
     private nonisolated func moveOrCopy(from source: URL, to destination: URL) throws {
@@ -442,13 +572,41 @@ public actor QuarantineStore {
         do {
             try fm.moveItem(at: source, to: destination)
             return
-        } catch {
-            do {
-                try fm.copyItem(at: source, to: destination)
-                try fm.removeItem(at: source)
-            } catch {
-                throw QuarantineError.moveFailed(error.localizedDescription)
+        } catch let moveError {
+            // Copying is a cross-volume fallback, not a generic retry. On a
+            // permission, collision, ACL or I/O failure it could otherwise
+            // leave a partial destination and obscure the real error.
+            guard Self.isCrossDeviceError(moveError) else {
+                throw QuarantineError.moveFailed(moveError.localizedDescription)
             }
         }
+
+        do {
+            try fm.copyItem(at: source, to: destination)
+        } catch {
+            try? fm.removeItem(at: destination)
+            throw QuarantineError.moveFailed(error.localizedDescription)
+        }
+
+        do {
+            try fm.removeItem(at: source)
+        } catch {
+            // Keep the operation on its original side when the delete half of
+            // copy-and-remove fails. If rollback itself is refused, both
+            // copies survive; duplication is safer than deleting either one.
+            try? fm.removeItem(at: destination)
+            throw QuarantineError.moveFailed(error.localizedDescription)
+        }
+    }
+
+    static func isCrossDeviceError(_ error: Error) -> Bool {
+        let nsError = error as NSError
+        if nsError.domain == NSPOSIXErrorDomain, nsError.code == Int(EXDEV) {
+            return true
+        }
+        guard let underlying = nsError.userInfo[NSUnderlyingErrorKey] as? Error else {
+            return false
+        }
+        return isCrossDeviceError(underlying)
     }
 }

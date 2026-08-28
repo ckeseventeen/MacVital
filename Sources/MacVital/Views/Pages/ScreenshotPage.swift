@@ -55,7 +55,8 @@ struct ScreenshotPage: View {
             VStack(alignment: .leading, spacing: Theme.Metric.sectionSpacing) {
                 PageHeader(
                     title: "截图",
-                    subtitle: shots.isCapturing ? "等待捕获…" : "截完可以直接在图上标注，再决定保存还是丢弃"
+                    subtitle: shots.isCapturing ? "等待捕获…" : "截完可以直接在图上标注，再决定保存还是丢弃",
+                    systemImage: "camera.viewfinder"
                 )
 
                 GlassGroup(spacing: Theme.Metric.gridSpacing) {
@@ -118,7 +119,8 @@ struct ScreenshotPage: View {
             VStack(alignment: .leading, spacing: 16) {
                 PageHeader(
                     title: "截图",
-                    subtitle: "\(Int(latest.size.width)) × \(Int(latest.size.height)) · \(RelativeDateFormat.string(latest.takenAt))"
+                    subtitle: "\(Int(latest.size.width)) × \(Int(latest.size.height)) · \(RelativeDateFormat.string(latest.takenAt))",
+                    systemImage: "camera.viewfinder"
                 ) {
                     Button("重新截图") { Task { await capture() } }
                         .buttonStyle(.bordered)

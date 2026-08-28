@@ -40,7 +40,7 @@ struct MacVitalApp: App {
                     Task { await environment.scanModel.startScan() }
                 }
                 .keyboardShortcut("r", modifiers: .command)
-                .disabled(environment.scanModel.isScanning)
+                .disabled(environment.scanModel.isScanning || environment.scanModel.isCleaning)
             }
         }
 

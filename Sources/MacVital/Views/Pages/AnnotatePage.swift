@@ -17,7 +17,8 @@ struct AnnotatePage: View {
             VStack(alignment: .leading, spacing: Theme.Metric.sectionSpacing) {
                 PageHeader(
                     title: "屏幕画笔",
-                    subtitle: pen.isActive ? "正在绘制 · 按 esc 退出" : "在任何窗口上方直接标注"
+                    subtitle: pen.isActive ? "正在绘制 · 按 esc 退出" : "在任何窗口上方直接标注",
+                    systemImage: "pencil.and.outline"
                 )
                 toggleCard
                 toolsCard

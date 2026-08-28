@@ -38,6 +38,9 @@ public struct ScanItem: Identifiable, Hashable, Codable, Sendable {
     public var lastAccessed: Date?
     /// Duplicate sets and per-project groupings share a key.
     public var groupKey: String?
+    /// For duplicate findings, the exact copy that was elected to survive.
+    /// Cleanup hashes both paths again and refuses if either has changed.
+    public var duplicateKeeperPath: String?
     public var ownerHint: OwnerHint?
     /// True when the contents can be regenerated from something still on disk
     /// (a lock file, a manifest, the network). Drives the default selection.
@@ -56,6 +59,7 @@ public struct ScanItem: Identifiable, Hashable, Codable, Sendable {
         lastModified: Date? = nil,
         lastAccessed: Date? = nil,
         groupKey: String? = nil,
+        duplicateKeeperPath: String? = nil,
         ownerHint: OwnerHint? = nil,
         rebuildable: Bool = false
     ) {
@@ -71,6 +75,7 @@ public struct ScanItem: Identifiable, Hashable, Codable, Sendable {
         self.lastModified = lastModified
         self.lastAccessed = lastAccessed
         self.groupKey = groupKey
+        self.duplicateKeeperPath = duplicateKeeperPath
         self.ownerHint = ownerHint
         self.rebuildable = rebuildable
     }

@@ -36,7 +36,19 @@ final class LiveBroadcaster: NSObject, ObservableObject {
 
     private var listener: NWListener?
     private var stream: SCStream?
-    private var clients: [ObjectIdentifier: NWConnection] = [:]
+    private struct ClientState {
+        let connection: NWConnection
+        var isSending = false
+        /// At most one unsent frame per viewer; newer frames replace older
+        /// ones so a slow client cannot grow memory without bound.
+        var pendingJPEG: Data?
+    }
+    private var clients: [ObjectIdentifier: ClientState] = [:]
+    /// Connections that have not supplied a complete, valid request yet.
+    /// Keeping them separate means they do not inflate the viewer count, but
+    /// they can still be cancelled on stop and bounded against slow-client
+    /// file-descriptor exhaustion.
+    private var pendingConnections: [ObjectIdentifier: NWConnection] = [:]
     private var encoder: FrameEncoder?
     private var latestJPEG: Data?
     /// Frames are encoded off the main actor and published back asynchronously,
@@ -55,6 +67,8 @@ final class LiveBroadcaster: NSObject, ObservableObject {
     private var sessionToken = ""
 
     private static let boundary = "macvitalframe"
+    private static let maximumConnections = 32
+    private static let requestTimeout: TimeInterval = 5
 
     /// The address to read off the screen and type on another device.
     func viewerURL(for address: String) -> String {
@@ -86,7 +100,9 @@ final class LiveBroadcaster: NSObject, ObservableObject {
     func stop() {
         listener?.cancel()
         listener = nil
-        for connection in clients.values { connection.cancel() }
+        for connection in pendingConnections.values { connection.cancel() }
+        pendingConnections.removeAll()
+        for client in clients.values { client.connection.cancel() }
         clients.removeAll()
         viewerCount = 0
 
@@ -126,9 +142,17 @@ final class LiveBroadcaster: NSObject, ObservableObject {
     }
 
     private func accept(_ connection: NWConnection) {
+        guard pendingConnections.count + clients.count < Self.maximumConnections else {
+            connection.cancel()
+            return
+        }
+        let key = ObjectIdentifier(connection)
+        pendingConnections[key] = connection
+
         // Set before `start`: a handler installed afterwards can miss the state
         // transition it was installed to catch.
-        connection.stateUpdateHandler = { [weak self] state in
+        connection.stateUpdateHandler = { [weak self, weak connection] state in
+            guard let connection else { return }
             switch state {
             case .cancelled, .failed:
                 Task { @MainActor in self?.drop(ObjectIdentifier(connection)) }
@@ -137,12 +161,39 @@ final class LiveBroadcaster: NSObject, ObservableObject {
             }
         }
         connection.start(queue: .main)
-        // One read is enough: we only care which path the request line asks
-        // for, and a request line fits in the first packet.
-        connection.receive(minimumIncompleteLength: 1, maximumLength: 4096) { [weak self] data, _, _, _ in
+        receiveRequest(on: connection, accumulated: Data())
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.requestTimeout) { [weak self, weak connection] in
+            guard let self, let connection,
+                  self.pendingConnections[key] === connection
+            else { return }
+            self.drop(key)
+        }
+    }
+
+    private func receiveRequest(on connection: NWConnection, accumulated: Data) {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 4096) {
+            [weak self] data, _, isComplete, error in
             Task { @MainActor in
                 guard let self else { return }
-                let request = data.flatMap { String(data: $0, encoding: .utf8) } ?? ""
+                guard error == nil else {
+                    connection.cancel()
+                    return
+                }
+                var requestData = accumulated
+                if let data { requestData.append(data) }
+                guard requestData.count <= 8_192 else {
+                    self.serveNotFound(on: connection)
+                    return
+                }
+
+                let hasRequestLine = requestData.range(of: Data("\n".utf8)) != nil
+                guard hasRequestLine || isComplete else {
+                    self.receiveRequest(on: connection, accumulated: requestData)
+                    return
+                }
+
+                let request = String(data: requestData, encoding: .utf8) ?? ""
                 // Routing lives in the kit so it can be tested — it is the
                 // only access control in the app. See `BroadcastRoute`.
                 switch BroadcastRoute.parse(request: request, token: self.sessionToken) {
@@ -181,40 +232,72 @@ final class LiveBroadcaster: NSObject, ObservableObject {
         header += "Connection: close\r\n\r\n"
 
         let key = ObjectIdentifier(connection)
-        clients[key] = connection
+        pendingConnections.removeValue(forKey: key)
+        clients[key] = ClientState(
+            connection: connection,
+            isSending: true,
+            pendingJPEG: latestJPEG
+        )
         viewerCount = clients.count
         encoder?.setHasViewers(true)
 
-        connection.send(content: Data(header.utf8), completion: .contentProcessed { _ in })
-
-        // Send the current frame immediately so the page is not blank until the
-        // screen next changes.
-        if let jpeg = latestJPEG { send(jpeg, to: connection) }
+        connection.send(content: Data(header.utf8), completion: .contentProcessed { [weak self] error in
+            Task { @MainActor in self?.sendCompleted(for: key, error: error) }
+        })
     }
 
     private func drop(_ key: ObjectIdentifier) {
-        clients[key]?.cancel()
-        clients.removeValue(forKey: key)
+        pendingConnections.removeValue(forKey: key)?.cancel()
+        clients.removeValue(forKey: key)?.connection.cancel()
         viewerCount = clients.count
         encoder?.setHasViewers(!clients.isEmpty)
     }
 
     private func broadcast(_ jpeg: Data) {
-        for (key, connection) in clients {
-            guard connection.state == .ready else {
+        for key in Array(clients.keys) {
+            guard let client = clients[key], client.connection.state == .ready else {
                 drop(key)
                 continue
             }
-            send(jpeg, to: connection)
+            enqueue(jpeg, for: key)
         }
     }
 
-    private func send(_ jpeg: Data, to connection: NWConnection) {
+    private func enqueue(_ jpeg: Data, for key: ObjectIdentifier) {
+        guard var client = clients[key] else { return }
+        if client.isSending {
+            client.pendingJPEG = jpeg
+            clients[key] = client
+            return
+        }
+        client.isSending = true
+        clients[key] = client
+        send(jpeg, for: key, on: client.connection)
+    }
+
+    private func send(_ jpeg: Data, for key: ObjectIdentifier, on connection: NWConnection) {
         var part = "--\(Self.boundary)\r\n"
         part += "Content-Type: image/jpeg\r\n"
         part += "Content-Length: \(jpeg.count)\r\n\r\n"
         connection.send(content: Data(part.utf8) + jpeg + Data("\r\n".utf8),
-                        completion: .contentProcessed { _ in })
+                        completion: .contentProcessed { [weak self] error in
+            Task { @MainActor in self?.sendCompleted(for: key, error: error) }
+        })
+    }
+
+    private func sendCompleted(for key: ObjectIdentifier, error: NWError?) {
+        guard error == nil, var client = clients[key] else {
+            drop(key)
+            return
+        }
+        if let pending = client.pendingJPEG {
+            client.pendingJPEG = nil
+            clients[key] = client
+            send(pending, for: key, on: client.connection)
+        } else {
+            client.isSending = false
+            clients[key] = client
+        }
     }
 
     // MARK: - Capture
@@ -280,12 +363,14 @@ final class LiveBroadcaster: NSObject, ObservableObject {
 
         for entry in sequence(first: first, next: { $0.pointee.ifa_next }) {
             let interface = entry.pointee
-            guard interface.ifa_addr.pointee.sa_family == UInt8(AF_INET) else { continue }
+            guard let addressPointer = interface.ifa_addr,
+                  addressPointer.pointee.sa_family == UInt8(AF_INET)
+            else { continue }
             let name = String(cString: interface.ifa_name)
             guard name.hasPrefix("en") || name.hasPrefix("bridge") else { continue }
 
             var host = [CChar](repeating: 0, count: Int(NI_MAXHOST))
-            guard getnameinfo(interface.ifa_addr, socklen_t(interface.ifa_addr.pointee.sa_len),
+            guard getnameinfo(addressPointer, socklen_t(addressPointer.pointee.sa_len),
                               &host, socklen_t(host.count), nil, 0, NI_NUMERICHOST) == 0 else { continue }
             let address = String(cString: host)
             if !address.isEmpty, address != "127.0.0.1", !results.contains(address) {

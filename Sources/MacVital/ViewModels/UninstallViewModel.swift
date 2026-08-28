@@ -40,6 +40,10 @@ final class UninstallViewModel: ObservableObject {
     @Published private(set) var leftovers: [Row] = []
 
     private let environment: AppEnvironment
+    private var installedApps: [InstalledAppIndex.App] = []
+    /// A detached plan can finish after the user has selected another app.
+    /// Only the newest generation may publish rows or clear the busy state.
+    private var planGeneration = 0
 
     init(environment: AppEnvironment) {
         self.environment = environment
@@ -122,6 +126,7 @@ final class UninstallViewModel: ObservableObject {
 
     func loadApps() {
         let index = InstalledAppIndex.build()
+        installedApps = index.apps
         let home = PathRedaction.home
         // Only what the user can actually remove: /Applications and
         // ~/Applications. Bundles under /System are SIP-protected and listing
@@ -244,11 +249,16 @@ final class UninstallViewModel: ObservableObject {
     }
 
     private func plan(for app: InstalledAppIndex.App, preservingSelection: Bool) async {
+        planGeneration += 1
+        let generation = planGeneration
         isPlanning = true
-        defer { isPlanning = false }
+        defer {
+            if planGeneration == generation { isPlanning = false }
+        }
 
         let rules = environment.rules
         let quarantineRoot = environment.quarantineRoot
+        let installedApps = self.installedApps
 
         // Keyed by path, not by `id`. `ScanItem.id` is a fresh `UUID()` on every
         // construction, so a re-plan produces entirely new identifiers and any
@@ -266,7 +276,7 @@ final class UninstallViewModel: ObservableObject {
             // memoised. The re-plan after an uninstall is exactly the moment
             // that has to see the disk as it is now.
             ScanCaches.invalidate()
-            let candidates = AppUninstallPlanner().plan(for: app)
+            let candidates = AppUninstallPlanner().plan(for: app, installedApps: installedApps)
             // Same engine, same catalog as every other removal path. The
             // uninstaller decides what to *propose*; permission is re-derived
             // here and again immediately before the move.
@@ -278,6 +288,9 @@ final class UninstallViewModel: ObservableObject {
             return candidates.map { Row(candidate: $0, decision: engine.evaluate($0.item)) }
         }.value
 
+        guard planGeneration == generation,
+              selectedApp?.path == app.path
+        else { return }
         rows = planned
 
         guard preservingSelection else {
@@ -311,6 +324,8 @@ final class UninstallViewModel: ObservableObject {
     }
 
     func clearSelection() {
+        planGeneration += 1
+        isPlanning = false
         selectedApp = nil
         rows = []
         selection = []

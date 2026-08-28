@@ -203,4 +203,39 @@ extension DeleteDenyACLTests {
 
         XCTAssertNil(SIPGuard.removalBlocker(at: root.path))
     }
+
+    func testExhaustiveExecutionCheckFindsABlockerBeyondTheScanLimit() throws {
+        let root = try makeDirectoryPublic("large-tree")
+        for index in 0..<2_100 {
+            try Data().write(to: root.appendingPathComponent(String(format: "%04d", index)))
+        }
+        let blocked = root.appendingPathComponent("zzzz-blocked", isDirectory: true)
+        try FileManager.default.createDirectory(at: blocked, withIntermediateDirectories: true)
+        try Data("x".utf8).write(to: blocked.appendingPathComponent("payload"))
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: blocked.path)
+        addTeardownBlock {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: blocked.path)
+        }
+
+        XCTAssertEqual(
+            SIPGuard.removalBlocker(at: root.path, maxEntries: nil),
+            .unwritableDirectory(path: blocked.path)
+        )
+    }
+
+    func testUnreadableNonEmptyDirectoryIsARemovalBlocker() throws {
+        let root = try makeDirectoryPublic("unreadable-root")
+        let blocked = root.appendingPathComponent("execute-only", isDirectory: true)
+        try FileManager.default.createDirectory(at: blocked, withIntermediateDirectories: true)
+        try Data("payload".utf8).write(to: blocked.appendingPathComponent("hidden"))
+        try FileManager.default.setAttributes([.posixPermissions: 0o111], ofItemAtPath: blocked.path)
+        addTeardownBlock {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: blocked.path)
+        }
+
+        XCTAssertEqual(
+            SIPGuard.removalBlocker(at: root.path, maxEntries: nil),
+            .unwritableDirectory(path: blocked.path)
+        )
+    }
 }

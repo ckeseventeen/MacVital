@@ -7,11 +7,11 @@ import MacVitalKit
 /// demand by launchd, and idle-exits when nothing is talking to it. It holds no
 /// state between connections.
 final class ListenerDelegate: NSObject, NSXPCListenerDelegate {
-    private let service = HelperService()
-
     func listener(_ listener: NSXPCListener, shouldAcceptNewConnection connection: NSXPCConnection) -> Bool {
         connection.exportedInterface = NSXPCInterface(with: MacVitalHelperProtocol.self)
-        connection.exportedObject = service
+        connection.exportedObject = HelperService(
+            clientUID: connection.effectiveUserIdentifier
+        )
         connection.resume()
         return true
     }

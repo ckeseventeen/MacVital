@@ -75,7 +75,8 @@ final class AppSettings: ObservableObject {
     /// is both the simplest and the only reliably current answer.
     nonisolated static func currentRetentionDays() -> Int {
         let stored = UserDefaults.standard.integer(forKey: retentionDaysKey)
-        return stored > 0 ? stored : QuarantineStore.defaultRetentionDays
+        guard stored > 0 else { return QuarantineStore.defaultRetentionDays }
+        return min(stored, 30)
     }
 
     var projectRoots: [String] {
@@ -98,10 +99,15 @@ final class AppSettings: ObservableObject {
     }
 
     func scanOptions() -> ScanOptions {
-        ScanOptions(
+        // The steppers enforce these ranges during normal use. Clamp again at
+        // the boundary because UserDefaults can be edited independently and an
+        // unchecked MB conversion could otherwise overflow Int64.
+        let safeDepth = min(max(projectSearchDepth, 2), 8)
+        let safeThresholdMB = min(max(largeFileThresholdMB, 50), 4_096)
+        return ScanOptions(
             projectRoots: usesDefaultProjectRoots ? nil : projectRoots,
-            projectSearchDepth: projectSearchDepth,
-            largeFileThreshold: Int64(largeFileThresholdMB) * 1_000_000
+            projectSearchDepth: safeDepth,
+            largeFileThreshold: Int64(safeThresholdMB) * 1_000_000
         )
     }
 

@@ -39,7 +39,7 @@ final class QuarantineViewModel: ObservableObject {
         defer { isReaping = false }
 
         let paths = Set(orphans.map(\.path))
-        let outcome = await environment.quarantine.discardOrphans(paths: paths)
+        let outcome = await environment.coordinator.discardOrphans(paths: paths)
         await reload()
         environment.refreshDiskSpace()
         if outcome.removed < paths.count {

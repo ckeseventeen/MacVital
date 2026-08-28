@@ -89,13 +89,17 @@ final class NetworkSpeedMonitor: ObservableObject {
         var sample = Sample()
         buffer.withUnsafeBytes { raw in
             guard let base = raw.baseAddress else { return }
+            let validLength = min(length, raw.count)
             var offset = 0
-            while offset + MemoryLayout<if_msghdr>.size <= length {
+            while offset + MemoryLayout<if_msghdr>.size <= validLength {
                 let header = base.advanced(by: offset).assumingMemoryBound(to: if_msghdr.self)
                 let messageLength = Int(header.pointee.ifm_msglen)
-                guard messageLength > 0 else { break }
+                guard messageLength >= MemoryLayout<if_msghdr>.size,
+                      offset + messageLength <= validLength
+                else { break }
 
-                if header.pointee.ifm_type == RTM_IFINFO2 {
+                if header.pointee.ifm_type == RTM_IFINFO2,
+                   messageLength >= MemoryLayout<if_msghdr2>.size {
                     let extended = base.advanced(by: offset).assumingMemoryBound(to: if_msghdr2.self)
                     let data = extended.pointee.ifm_data
                     // Loopback carries every local connection and would report

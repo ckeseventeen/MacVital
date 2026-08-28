@@ -85,7 +85,7 @@ App 和助手之间的 XPC 连接用 `setConnectionCodeSigningRequirement` 双�
 
 **team identifier 只存在于 Apple 签发的证书里**（在 `certificate leaf[subject.OU]` 字段）。自签名证书没有这个字段，`teamIdentifier()` 返回 `nil`，助手会主动 `exit(EXIT_FAILURE)` 而不是降级放行——因为没有 team id 就没有任何办法认证调用方，那就不提供服务。这是刻意的，见 [SAFETY.md](SAFETY.md) 第四节。
 
-所以需要 root 的那 5 条规则（`/Library` 下的系统级残留）在非 Developer ID 构建下**不可用**。其余全部功能不受影响。
+所以需要 root 的那 8 条规则（`/Library` 与安装回执目录下的系统级残留）在非 Developer ID 构建下**不可用**。其余全部功能不受影响。
 
 ---
 

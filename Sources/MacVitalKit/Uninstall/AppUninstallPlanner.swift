@@ -67,9 +67,17 @@ public struct AppUninstallPlanner: Sendable {
 
     // MARK: - Plan
 
-    public func plan(for app: InstalledAppIndex.App) -> [Candidate] {
+    public func plan(
+        for app: InstalledAppIndex.App,
+        installedApps: [InstalledAppIndex.App] = []
+    ) -> [Candidate] {
         var candidates: [Candidate] = []
         var seen = Set<String>()
+        let siblingIdentifiers = Set(
+            installedApps
+                .map { $0.bundleIdentifier.lowercased() }
+                .filter { $0 != app.bundleIdentifier.lowercased() }
+        )
 
         func add(_ path: String, kind: Kind, ruleID: String) {
             let normalized = ProtectedPaths.normalize(path)
@@ -126,6 +134,7 @@ public struct AppUninstallPlanner: Sendable {
         ]
         for (directory, kind, ruleID) in identifierLocations {
             addMatching(directory, identifier: id, kind: kind, ruleID: ruleID,
+                        siblingIdentifiers: siblingIdentifiers,
                         into: &candidates, seen: &seen, app: app)
         }
 
@@ -159,6 +168,7 @@ public struct AppUninstallPlanner: Sendable {
                 identifier: id,
                 kind: .state,
                 ruleID: "residue.plugin.\(location.suffix)",
+                siblingIdentifiers: siblingIdentifiers,
                 into: &candidates, seen: &seen, app: app
             )
         }
@@ -166,7 +176,13 @@ public struct AppUninstallPlanner: Sendable {
         // 6. Sandbox containers macOS named with a UUID rather than the bundle
         //    identifier. Nothing about the directory name reveals the owner;
         //    the container's own metadata does.
-        addUUIDContainers(identifier: id, into: &candidates, seen: &seen, app: app)
+        addUUIDContainers(
+            identifier: id,
+            siblingIdentifiers: siblingIdentifiers,
+            into: &candidates,
+            seen: &seen,
+            app: app
+        )
 
         return candidates.sorted { $0.item.sizeBytes > $1.item.sizeBytes }
     }
@@ -222,6 +238,7 @@ public struct AppUninstallPlanner: Sendable {
         identifier: String,
         kind: Kind,
         ruleID: String,
+        siblingIdentifiers: Set<String>,
         into candidates: inout [Candidate],
         seen: inout Set<String>,
         app: InstalledAppIndex.App
@@ -231,6 +248,7 @@ public struct AppUninstallPlanner: Sendable {
 
         for child in FileWalker.children(of: root) {
             guard let bundleID = Self.bundleIdentifier(at: child) else { continue }
+            guard !Self.belongsToInstalledSibling(bundleID, siblingIdentifiers) else { continue }
             guard Self.name(bundleID, belongsTo: identifier) else { continue }
             let normalized = ProtectedPaths.normalize(child.path)
             guard seen.insert(normalized).inserted else { continue }
@@ -256,6 +274,7 @@ public struct AppUninstallPlanner: Sendable {
     /// an uninstall and then sat in quarantine as an unattributable blob.
     private func addUUIDContainers(
         identifier: String,
+        siblingIdentifiers: Set<String>,
         into candidates: inout [Candidate],
         seen: inout Set<String>,
         app: InstalledAppIndex.App
@@ -267,6 +286,7 @@ public struct AppUninstallPlanner: Sendable {
             // Only the ones the identifier match cannot already reach.
             guard UUID(uuidString: child.lastPathComponent) != nil else { continue }
             guard let owner = Self.containerOwner(at: child) else { continue }
+            guard !Self.belongsToInstalledSibling(owner, siblingIdentifiers) else { continue }
             guard Self.name(owner, belongsTo: identifier) else { continue }
 
             let normalized = ProtectedPaths.normalize(child.path)
@@ -305,6 +325,7 @@ public struct AppUninstallPlanner: Sendable {
         identifier: String,
         kind: Kind,
         ruleID: String,
+        siblingIdentifiers: Set<String>,
         into candidates: inout [Candidate],
         seen: inout Set<String>,
         app: InstalledAppIndex.App
@@ -312,6 +333,7 @@ public struct AppUninstallPlanner: Sendable {
         let root = URL(fileURLWithPath: directory)
         guard fileManager.fileExists(atPath: root.path) else { return }
         for child in FileWalker.children(of: root) {
+            guard !Self.belongsToInstalledSibling(child.lastPathComponent, siblingIdentifiers) else { continue }
             guard Self.name(child.lastPathComponent, belongsTo: identifier) else { continue }
             let normalized = ProtectedPaths.normalize(child.path)
             guard seen.insert(normalized).inserted else { continue }
@@ -334,6 +356,34 @@ public struct AppUninstallPlanner: Sendable {
     private static let knownExtensions: Set<String> = [
         "plist", "savedState", "binarycookies", "bom", "sfl2", "sfl3", "lockfile",
     ]
+
+    /// A dotted identifier can mean either this app's extension or a different
+    /// installed product. Prefer the installed-product evidence: uninstalling
+    /// `com.acme.Editor` must never preselect `com.acme.Editor.Pro`'s data.
+    private static func belongsToInstalledSibling(
+        _ rawName: String,
+        _ siblingIdentifiers: Set<String>
+    ) -> Bool {
+        var candidate = rawName
+        let ext = (candidate as NSString).pathExtension
+        if knownExtensions.contains(ext) {
+            candidate = (candidate as NSString).deletingPathExtension
+        }
+
+        if let dot = candidate.firstIndex(of: ".") {
+            let prefix = String(candidate[..<dot])
+            let isTeamIdentifier = prefix.count == 10
+                && prefix.allSatisfy { $0.isLetter || $0.isNumber }
+            if prefix.caseInsensitiveCompare("group") == .orderedSame || isTeamIdentifier {
+                candidate = String(candidate[candidate.index(after: dot)...])
+            }
+        }
+
+        let lower = candidate.lowercased()
+        return siblingIdentifiers.contains { sibling in
+            lower == sibling || lower.hasPrefix(sibling + ".")
+        }
+    }
 
     static func name(_ name: String, belongsTo identifier: String) -> Bool {
         // A short or dotless identifier is not specific enough to prefix-match

@@ -4,6 +4,7 @@ MacVital.xcodeproj/
 ## Build
 build/
 build-test/
+build-analyze/
 DerivedData/
 *.xcarchive
 *.dSYM.zip

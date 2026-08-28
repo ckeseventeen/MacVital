@@ -93,9 +93,10 @@
 
 - 同一份 `RuleCatalog` 在 root 侧**再跑一遍**
 - 只接受能被 `requiresPrivilege` 规则匹配的路径（目前 8 条，全在测试显式列出的系统根下）
-- `purge` 只允许删隔离区内部的路径
-- 隔离区路径必须形如 `/Users/<name>/Library/Application Support/MacVital/Quarantine`，且**属主不能是 root**（root 拥有的隔离区意味着有人伪造了它）
-- 归还属主用 `lchown` 而不是 `chown`——被移动的树来自特权目录且内容非我方编写，`chown` 会跟随符号链接，等于把系统上任意文件的属主交给非特权用户
+- 每条 XPC 连接绑定 `effectiveUserIdentifier`；隔离区必须精确位于系统账户记录的该用户 home 下、由该用户拥有，且祖先目录不能是符号链接
+- 移动先进入 root 专属暂存区，再通过目录描述符和 `renameatx_np(...NOFOLLOW...)` 发布；回滚失败时保留暂存区，绝不清除用户数据
+- 特权隔离容器保持 root 所有且权限为 `0700`，并用扩展属性密封原路径；还原前必须同时验证容器、载荷和原路径凭据
+- `purge` 只接受 `Items/<UUID>` 形状、由 Helper 创建并密封的完整容器，递归删除锚定在已打开的 `Items` 描述符下
 
 ### 连接认证
 
@@ -141,8 +142,8 @@
 
 - **加规则**：改 `RuleCatalog`，写清楚 `pattern` 的上界。默认 `autoSelectable: false`。
 - **加特权规则**：`RuleEngineTests.testPrivilegedRulesLiveOnlyInApprovedSystemRoots` 里有一份显式的系统根白名单，必须手动加进去——这是刻意的，特权规则不该跟着功能悄悄溜进来。
-- **动 `allowedInUserData`**：有测试锁死这 8 条。扩大它必须是刻意的。
+- **动 `allowedInUserData`**：有测试锁死这 16 条。扩大它必须是刻意的。
 - **动拒绝清单**：见第三节。加第三个例外前先确认真的没有别的做法。
 - **加 UI 颜色/样式**：放在 App 层。`MacVitalKit` 是安全核心，不依赖 SwiftUI，规则引擎不该有任何东西能依赖一个颜色。
 
-测试跑 `make test`，72 个，全部针对安全核心。
+测试跑 `make test`，240 个，全部针对安全核心。

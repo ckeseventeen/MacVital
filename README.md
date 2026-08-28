@@ -84,6 +84,8 @@ macOS 空间清理与演示工具。核心不是「能删」，而是**敢删且
 
 - 跨卷 `moveItem` 失败会回落到 copy + remove
 - 还原时若原位置已有同名文件，**中止而不是覆盖**
+- 特权项目由 Helper 放入 root 所有、`0700` 的密封容器；原路径写入扩展属性，防止替换载荷后借还原提权
+- 还原与清除先持久化操作标记，进程中断后会在下次启动自动对账
 - 每条记录保留当时的规则 rationale 和模型解释，一周后还能回答「这为什么被删了」
 - 清扫在每次启动时执行，不依赖用户打开某个界面
 
@@ -101,7 +103,7 @@ macOS 空间清理与演示工具。核心不是「能删」，而是**敢删且
 
 `CompositeAdvisor` 保证：任何后端失败或超时都回落到内置规则表，每一项都有解释；模型返回的、不在本批次里的 id 一律丢弃。
 
-**卸载残留溯源**是 AI 真正有增量的地方。`AppResidueScanner` 只做确定性的那一半（精确匹配 / 厂商前缀匹配），把 `.vendorInstalled` 和 `.none` 交给模型。`EvidenceCollector` 提供的证据是：文件名 + 目录列表 + plist 顶层键名与身份值 + 文本文件头 384 字节，全部脱敏后传入。
+**卸载残留溯源**是 AI 真正有增量的地方。`AppResidueScanner` 只做确定性的那一半（精确匹配 / 厂商前缀匹配），把 `.vendorInstalled` 和 `.none` 交给模型。`EvidenceCollector` 提供文件名、目录列表、plist 顶层键名与身份值；本地模型可读取最多 384 字节的可打印文件头，云端请求会强制剥离所有文件内容，只发送脱敏元数据。
 
 ---
 
@@ -111,7 +113,7 @@ macOS 空间清理与演示工具。核心不是「能删」，而是**敢删且
 - **不上 App Store**：沙盒进程拿不到完整磁盘访问权限，`~/Library` 下几乎什么都看不到。Developer ID 独立分发 + 公证。
 - **提权**：`SMAppService` 注册的特权 Helper。主进程绝不以 root 运行。
 - **XPC 双向校验**：`NSXPCListener.setConnectionCodeSigningRequirement` + `NSXPCConnection.setCodeSigningRequirement`，不碰 `auditToken` 私有 API。要求串从**运行中二进制自己的 team identifier** 推导——签名不一致的构建互相连不上；拿不到 team id 时 Helper 直接退出而不是降级放行。
-- **Helper 不信任客户端**：同一份 `RuleCatalog` 在 root 侧再跑一遍，且只接受能被 `requiresPrivilege` 规则匹配的路径；`purge` 只允许删隔离区内部的路径。
+- **Helper 不信任客户端**：每条 XPC 连接绑定调用者 UID，同一份 `RuleCatalog` 在 root 侧再跑一遍；移动、还原和清除都用目录描述符与 `NOFOLLOW` 完成，`purge` 只接受 Helper 密封的完整隔离容器。
 - **玻璃 UI**：macOS 26+ 用真正的 Liquid Glass，以下回落到 `Material`，部署目标仍是 14。
 
 ---
@@ -136,11 +138,11 @@ Sources/
     Annotate/           标注对象模型、画布、屏幕画笔、白板
     Screenshot/         截图、录屏、局域网直播
   MacVitalHelper/       特权助手（root，无 entitlement）
-Tests/MacVitalKitTests/ 224 个测试，全部针对安全核心
+Tests/MacVitalKitTests/ 240 个测试，全部针对安全核心
 Tools/MakeAppIcon.swift 图标生成脚本（图标可复现）
 ```
 
-约 15,200 行 Swift。
+约 17,900 行产品 Swift 代码。
 
 ---
 
@@ -208,7 +210,7 @@ make helper-log
 
 - `SMAppService.daemon` 注册后 `MachServices` 能否被 `NSXPCConnection(machServiceName:options:.privileged)` 连上
 - `setConnectionCodeSigningRequirement` 的要求串在真实签名下是否通过
-- 特权路径整条链路：`moveToQuarantine` → `chownToOwner` → 还原 / 清除
+- 特权路径整条链路：安全暂存 → 密封隔离容器 → 还原 / 清除
 
 已知不做的事：
 

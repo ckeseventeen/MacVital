@@ -44,7 +44,7 @@ public struct LocalModelAdvisor: AIAdvisor {
         // name — `/etc/hosts` or a resolver can point it anywhere, which is
         // precisely the "silently becomes a network upload" case this guard
         // exists to stop.
-        guard ["127.0.0.1", "::1"].contains(configuration.endpoint.host ?? "") else {
+        guard Self.isNumericLoopback(configuration.endpoint) else {
             throw AdvisorError.notConfigured("本地模型地址必须指向 127.0.0.1（不接受主机名）")
         }
 
@@ -59,6 +59,10 @@ public struct LocalModelAdvisor: AIAdvisor {
 
     /// Reachability probe for the settings screen.
     public func ping() async -> Bool {
+        // The settings screen promises that testing a "local" endpoint never
+        // contacts another host. Apply the same boundary as `assess`; the old
+        // probe would issue a request to any URL typed into the field.
+        guard Self.isNumericLoopback(configuration.endpoint) else { return false }
         var components = URLComponents(url: configuration.endpoint, resolvingAgainstBaseURL: false)
         components?.path = "/api/tags"
         guard let url = components?.url else { return false }
@@ -68,6 +72,10 @@ public struct LocalModelAdvisor: AIAdvisor {
               let http = response as? HTTPURLResponse
         else { return false }
         return http.statusCode == 200
+    }
+
+    static func isNumericLoopback(_ url: URL) -> Bool {
+        ["127.0.0.1", "::1"].contains(url.host ?? "")
     }
 
     // MARK: - Transport

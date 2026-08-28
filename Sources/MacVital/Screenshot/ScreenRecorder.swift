@@ -1,5 +1,6 @@
 import AVFoundation
 import AppKit
+import MacVitalKit
 import ScreenCaptureKit
 
 /// Screen recording via ScreenCaptureKit, written straight to H.264.
@@ -43,6 +44,13 @@ final class ScreenRecorder: NSObject, ObservableObject {
     private var outputURL: URL?
     private var frameSize: CGSize = .zero
     private let sampleQueue = DispatchQueue(label: "com.macvital.recorder.samples")
+    private let recordingsDirectory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("MacVital-Recordings", isDirectory: true)
+
+    override init() {
+        super.init()
+        Self.pruneStaleFiles(in: recordingsDirectory)
+    }
 
     // MARK: - Start
 
@@ -92,10 +100,8 @@ final class ScreenRecorder: NSObject, ObservableObject {
     }
 
     private func prepareWriter() throws {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("MacVital-Recordings", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let url = directory.appendingPathComponent("\(UUID().uuidString).mp4")
+        try FileManager.default.createDirectory(at: recordingsDirectory, withIntermediateDirectories: true)
+        let url = recordingsDirectory.appendingPathComponent("\(UUID().uuidString).mp4")
 
         let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
         let input = AVAssetWriterInput(mediaType: .video, outputSettings: [
@@ -138,6 +144,9 @@ final class ScreenRecorder: NSObject, ObservableObject {
                 let duration = (try? await asset.load(.duration).seconds) ?? 0
                 let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
                 let bytes = (attributes?[.size] as? NSNumber)?.int64Value ?? 0
+                if let previous = latest?.url, previous != url {
+                    try? FileManager.default.removeItem(at: previous)
+                }
                 latest = Recording(url: url, duration: duration, size: frameSize, bytes: bytes)
             }
         case .failed(let error):
@@ -204,6 +213,16 @@ final class ScreenRecorder: NSObject, ObservableObject {
     func discard() {
         if let latest { try? FileManager.default.removeItem(at: latest.url) }
         latest = nil
+    }
+
+    private static func pruneStaleFiles(in directory: URL) {
+        let cutoff = Date().addingTimeInterval(-24 * 60 * 60)
+        for file in FileWalker.children(of: directory) {
+            let modified = (try? file.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
+            if modified.map({ $0 < cutoff }) ?? true {
+                try? FileManager.default.removeItem(at: file)
+            }
+        }
     }
 
     // MARK: - Errors
@@ -339,4 +358,3 @@ extension ScreenRecorder: SCStreamDelegate {
         }
     }
 }
-

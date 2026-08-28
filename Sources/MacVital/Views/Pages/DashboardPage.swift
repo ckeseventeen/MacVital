@@ -142,9 +142,7 @@ struct DashboardPage: View {
 
     private var quickActions: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("快捷操作")
-                .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(Theme.label)
+            SectionTitle(title: "快捷操作", systemImage: "bolt.fill")
 
             // Three columns, not two. There are five actions, and two columns
             // left the last one alone on its own row with a hole beside it.
@@ -169,7 +167,7 @@ struct DashboardPage: View {
                     environment.page = .junk
                     Task { await model.startScan() }
                 }
-                .disabled(model.isScanning)
+                .disabled(model.isScanning || model.isCleaning)
 
                 QuickAction(
                     title: "卸载应用",
@@ -230,9 +228,7 @@ extension DashboardPage {
     /// way down a tall window, which read as unfinished.
     fileprivate var systemStatus: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("系统状态")
-                .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(Theme.label)
+            SectionTitle(title: "系统状态", systemImage: "checkmark.shield", tint: Theme.success)
 
             LazyVGrid(
                 columns: Array(

@@ -212,12 +212,15 @@ seam.fill()
 
 // Slots, same treatment.
 // Slots inherit the seam's fill colour, set just above.
-let slotCount = 6
+// Five vents leave room for a status light. That one small colour accent makes
+// the drive read as "healthy / alive" (the Vital in MacVital) and gives the
+// icon a recognisable detail even when several blue utility icons sit together.
+let slotCount = 5
 let slotWidth: CGFloat = 22
 let slotHeight: CGFloat = 62
 let slotGap: CGFloat = 20
 let slotsWidth = CGFloat(slotCount) * slotWidth + CGFloat(slotCount - 1) * slotGap
-var slotX = centreX - slotsWidth / 2
+var slotX = bodyRect.minX + 112
 let slotY = bodyRect.minY + (bodyHeight - slotHeight) / 2 - 4
 for _ in 0..<slotCount {
     NSBezierPath(
@@ -227,18 +230,38 @@ for _ in 0..<slotCount {
     slotX += slotWidth + slotGap
 }
 
+// A restrained green LED: large enough to survive the 16pt rendition, small
+// enough not to turn the storage glyph into a notification badge.
+let ledCenter = CGPoint(x: bodyRect.maxX - 82, y: bodyRect.midY - 4)
+ctx.saveGState()
+ctx.setShadow(offset: .zero, blur: 20,
+              color: NSColor(srgbRed: 0.18, green: 0.88, blue: 0.61, alpha: 0.75).cgColor)
+NSColor(srgbRed: 0.18, green: 0.82, blue: 0.55, alpha: 1).setFill()
+NSBezierPath(ovalIn: NSRect(x: ledCenter.x - 27, y: ledCenter.y - 27, width: 54, height: 54)).fill()
+ctx.restoreGState()
+
+NSColor(white: 1, alpha: 0.58).setFill()
+NSBezierPath(ovalIn: NSRect(x: ledCenter.x - 10, y: ledCenter.y + 6, width: 15, height: 15)).fill()
+
 // A hairline of the plate's own light along the very top of the lid: the edge
 // facing the light source is the one that should be brightest.
 ctx.saveGState()
 silhouette.addClip()
-NSGradient(
+guard let topHighlight = NSGradient(
     starting: NSColor(white: 1, alpha: 0.9),
     ending: NSColor(white: 1, alpha: 0)
-)!.draw(in: NSRect(x: bodyRect.minX, y: lidTopY - 26, width: bodyWidth, height: 26), angle: -90)
+) else { exit(2) }
+topHighlight.draw(in: NSRect(x: bodyRect.minX, y: lidTopY - 26, width: bodyWidth, height: 26), angle: -90)
 ctx.restoreGState()
 
 guard let png = rep.representation(using: .png, properties: [:]) else { exit(3) }
 
 let out = CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : "icon-1024.png"
-try! png.write(to: URL(fileURLWithPath: out))
+do {
+    try png.write(to: URL(fileURLWithPath: out))
+} catch {
+    let message = "could not write \(out): \(error)\n"
+    FileHandle.standardError.write(Data(message.utf8))
+    exit(4)
+}
 print("wrote \(out)")

@@ -109,17 +109,19 @@ public struct RunningProcessIndex: Sendable {
 
     // MARK: - libproc
 
-    private static func allPIDs() -> [pid_t] {
-        let byteCount = proc_listallpids(nil, 0)
-        guard byteCount > 0 else { return [] }
-        let capacity = Int(byteCount) / MemoryLayout<pid_t>.size + 64
+    static func allPIDs() -> [pid_t] {
+        // Despite its buffer argument being expressed in bytes, both return
+        // values are PID counts. Treating them as bytes divided the result by
+        // four twice and silently omitted most background processes.
+        let estimatedCount = proc_listallpids(nil, 0)
+        guard estimatedCount > 0 else { return [] }
+        let capacity = Int(estimatedCount) + 64
         var pids = [pid_t](repeating: 0, count: capacity)
         let written = pids.withUnsafeMutableBufferPointer { buffer -> Int32 in
             proc_listallpids(buffer.baseAddress, Int32(buffer.count * MemoryLayout<pid_t>.size))
         }
         guard written > 0 else { return [] }
-        let count = Int(written) / MemoryLayout<pid_t>.size
-        return Array(pids.prefix(count)).filter { $0 > 0 }
+        return Array(pids.prefix(Int(written))).filter { $0 > 0 }
     }
 
     /// Whether `pid` is still running the executable it was recorded with.

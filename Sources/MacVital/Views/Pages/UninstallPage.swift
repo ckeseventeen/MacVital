@@ -25,7 +25,8 @@ struct UninstallPage: View {
             VStack(alignment: .leading, spacing: 18) {
                 PageHeader(
                     title: "卸载应用",
-                    subtitle: "\(model.apps.count) 个应用 · 选中后一并清除它散落各处的配置"
+                    subtitle: "\(model.apps.count) 个应用 · 选中后一并清除它散落各处的配置",
+                    systemImage: "app.badge.checkmark"
                 )
                 searchField
             }

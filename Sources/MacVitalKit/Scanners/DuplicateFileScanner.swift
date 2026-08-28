@@ -45,7 +45,7 @@ public struct DuplicateFileScanner: Scanner {
         for (_, urls) in sampleGroups {
             if Task.isCancelled { throw CancellationError() }
             for url in urls {
-                guard let digest = fullDigest(of: url) else { continue }
+                guard let digest = Self.fullDigest(of: url) else { continue }
                 byHash[digest, default: []].append(url)
             }
         }
@@ -98,6 +98,7 @@ public struct DuplicateFileScanner: Scanner {
                     lastModified: attributes.modified,
                     lastAccessed: attributes.accessed,
                     groupKey: digest,
+                    duplicateKeeperPath: ProtectedPaths.normalize(keeper.path),
                     rebuildable: false
                 ))
             }
@@ -226,6 +227,11 @@ public struct DuplicateFileScanner: Scanner {
         let device: dev_t
         let inode: ino_t
 
+        init(device: dev_t, inode: ino_t) {
+            self.device = device
+            self.inode = inode
+        }
+
         init?(path: String) {
             var info = stat()
             guard lstat(path, &info) == 0 else { return nil }
@@ -250,24 +256,72 @@ public struct DuplicateFileScanner: Scanner {
 
         if size > Int64(sampleSize) * 2 {
             let tailOffset = UInt64(size) - UInt64(sampleSize)
-            if (try? handle.seek(toOffset: tailOffset)) != nil,
-               let tail = try? handle.read(upToCount: sampleSize) {
-                hasher.update(data: tail)
-            }
+            guard (try? handle.seek(toOffset: tailOffset)) != nil,
+                  let tail = try? handle.read(upToCount: sampleSize),
+                  tail.count == sampleSize
+            else { return nil }
+            hasher.update(data: tail)
         }
         return hasher.finalize().compactMap { String(format: "%02x", $0) }.joined()
     }
 
-    private func fullDigest(of url: URL) -> String? {
+    static func fullDigest(of url: URL) -> String? {
         guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
         defer { try? handle.close() }
 
         var hasher = SHA256()
         let chunkSize = 4 * 1024 * 1024
-        while true {
-            guard let chunk = try? handle.read(upToCount: chunkSize), !chunk.isEmpty else { break }
-            hasher.update(data: chunk)
+        do {
+            while let chunk = try handle.read(upToCount: chunkSize), !chunk.isEmpty {
+                hasher.update(data: chunk)
+            }
+        } catch {
+            // A read error is not EOF. Hashing only the readable prefix can
+            // make two damaged or concurrently-mutated files look identical.
+            return nil
         }
         return hasher.finalize().compactMap { String(format: "%02x", $0) }.joined()
+    }
+
+    /// Revalidates the destructive claim at execution time. Both the offered
+    /// duplicate and the elected keeper must still be distinct regular files,
+    /// unchanged while hashing, and equal to the scan-time full digest.
+    static func isStillDuplicate(_ item: ScanItem) -> Bool {
+        guard item.category == .duplicateFiles,
+              let keeperPath = item.duplicateKeeperPath,
+              let expectedDigest = item.groupKey,
+              item.path != keeperPath,
+              let candidateBefore = FileSnapshot(path: item.path),
+              let keeperBefore = FileSnapshot(path: keeperPath),
+              candidateBefore.isRegular,
+              keeperBefore.isRegular,
+              candidateBefore.identity != keeperBefore.identity,
+              candidateBefore.size == keeperBefore.size,
+              fullDigest(of: URL(fileURLWithPath: item.path)) == expectedDigest,
+              fullDigest(of: URL(fileURLWithPath: keeperPath)) == expectedDigest,
+              let candidateAfter = FileSnapshot(path: item.path),
+              let keeperAfter = FileSnapshot(path: keeperPath),
+              candidateBefore == candidateAfter,
+              keeperBefore == keeperAfter
+        else { return false }
+        return true
+    }
+
+    private struct FileSnapshot: Equatable {
+        let identity: FileIdentity
+        let size: off_t
+        let modifiedSeconds: Int
+        let modifiedNanoseconds: Int
+        let isRegular: Bool
+
+        init?(path: String) {
+            var info = stat()
+            guard lstat(path, &info) == 0 else { return nil }
+            identity = FileIdentity(device: info.st_dev, inode: info.st_ino)
+            size = info.st_size
+            modifiedSeconds = info.st_mtimespec.tv_sec
+            modifiedNanoseconds = info.st_mtimespec.tv_nsec
+            isRegular = (info.st_mode & S_IFMT) == S_IFREG
+        }
     }
 }

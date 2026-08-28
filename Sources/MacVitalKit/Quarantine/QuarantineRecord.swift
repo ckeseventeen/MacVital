@@ -1,5 +1,10 @@
 import Foundation
 
+public enum QuarantineOperation: String, Codable, Hashable, Sendable {
+    case restoring
+    case purging
+}
+
 /// One thing that was removed, and everything needed to put it back.
 public struct QuarantineRecord: Identifiable, Codable, Hashable, Sendable {
     public var id: UUID
@@ -21,6 +26,9 @@ public struct QuarantineRecord: Identifiable, Codable, Hashable, Sendable {
     /// this?" is answerable a week later.
     public var aiSummary: String?
     public var usedPrivilegedHelper: Bool
+    /// Durable intent written before a destructive filesystem operation.
+    /// A launch after a crash reconciles this marker with what is on disk.
+    public var pendingOperation: QuarantineOperation?
 
     public init(
         id: UUID = UUID(),
@@ -34,7 +42,8 @@ public struct QuarantineRecord: Identifiable, Codable, Hashable, Sendable {
         ruleID: String,
         rationale: String,
         aiSummary: String? = nil,
-        usedPrivilegedHelper: Bool = false
+        usedPrivilegedHelper: Bool = false,
+        pendingOperation: QuarantineOperation? = nil
     ) {
         self.id = id
         self.originalPath = originalPath
@@ -48,6 +57,7 @@ public struct QuarantineRecord: Identifiable, Codable, Hashable, Sendable {
         self.rationale = rationale
         self.aiSummary = aiSummary
         self.usedPrivilegedHelper = usedPrivilegedHelper
+        self.pendingOperation = pendingOperation
     }
 
     public var isExpired: Bool { Date() >= purgeAfter }
@@ -107,7 +117,7 @@ public enum RecordBlocker: Equatable, Sendable {
         _ record: QuarantineRecord,
         privilegedRemovalPossible: Bool
     ) -> RecordBlocker? {
-        if let blocker = SIPGuard.removalBlocker(at: record.storedPath) {
+        if let blocker = SIPGuard.removalBlocker(at: record.storedPath, maxEntries: nil) {
             return .contentsNotRemovable(path: blocker.path)
         }
         if record.usedPrivilegedHelper && !privilegedRemovalPossible {
