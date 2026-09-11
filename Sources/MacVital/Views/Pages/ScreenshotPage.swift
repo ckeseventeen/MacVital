@@ -79,7 +79,7 @@ struct ScreenshotPage: View {
                         Text("还没有截图")
                             .font(.system(size: 16, weight: .medium))
                             .foregroundStyle(Theme.label)
-                        Text("选区和窗口模式使用系统原生的选择界面，按 esc 取消。全屏模式会先自动隐藏本窗口。")
+                        Text("开始截图后会暂时隐藏 PureMark，显示刚才位于后面的应用。选区和窗口模式按 esc 可取消。")
                             .font(.system(size: 13))
                             .foregroundStyle(Theme.secondaryLabel)
                             .multilineTextAlignment(.center)
@@ -206,7 +206,7 @@ struct ScreenshotPage: View {
 
     private func capture() async {
         savedTo = nil
-        let window = NSApp.windows.first { $0.isVisible && $0.canBecomeMain }
+        let window = NSApp.keyWindow ?? NSApp.mainWindow
         await shots.capture(mode: mode, hiding: window)
     }
 

@@ -52,9 +52,6 @@ final class ScreenshotService: ObservableObject {
             case .window: return ["-i", "-W"]
             }
         }
-
-        /// Whether our own window would end up in the shot.
-        var capturesOurWindow: Bool { self == .fullScreen }
     }
 
     struct Capture: Equatable {
@@ -95,6 +92,7 @@ final class ScreenshotService: ObservableObject {
 
     func capture(mode: Mode, hiding window: NSWindow?) async {
         guard !isCapturing else { return }
+        clearError()
         isCapturing = true
         defer { isCapturing = false }
 
@@ -113,15 +111,24 @@ final class ScreenshotService: ObservableObject {
         try? FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
         let destination = scratch.appendingPathComponent("\(UUID().uuidString).png")
 
-        // Our own window is in front of everything the user wants to capture.
-        // Hide it for full-screen shots and put it back afterwards; the
-        // interactive modes let the user pick around it, so leave those alone.
-        let shouldHide = mode.capturesOurWindow && window != nil
-        if shouldHide {
-            window?.orderOut(nil)
+        // Starting the system's interactive picker takes over mouse and
+        // keyboard input, so the user cannot switch to another app after it
+        // appears. Hide MacVital before every capture mode: this reveals the
+        // app that was behind us before the picker starts and also keeps every
+        // MacVital window out of full-screen shots.
+        let shouldRestoreApplication = window != nil
+        if shouldRestoreApplication {
+            NSApp.hide(nil)
             // One runloop turn is not enough — the window server needs a beat
-            // to actually stop compositing it.
+            // to remove our windows and activate the app underneath.
             try? await Task.sleep(for: .milliseconds(220))
+        }
+        defer {
+            if shouldRestoreApplication {
+                NSApp.unhide(nil)
+                window?.makeKeyAndOrderFront(nil)
+                NSApp.activate(ignoringOtherApps: true)
+            }
         }
 
         var arguments = mode.arguments
@@ -129,11 +136,6 @@ final class ScreenshotService: ObservableObject {
         arguments.append(destination.path)
 
         let status = await run(arguments: arguments)
-
-        if shouldHide {
-            window?.makeKeyAndOrderFront(nil)
-            NSApp.activate(ignoringOtherApps: true)
-        }
 
         // Escape during an interactive capture exits cleanly and writes
         // nothing. With the permission preflight above already passed, that is

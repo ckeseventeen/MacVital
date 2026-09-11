@@ -25,6 +25,7 @@ final class AppEnvironment: ObservableObject {
 
     let networkSpeeds = NetworkSpeedMonitor()
     let screenPen = ScreenPenController()
+    let whiteboard = WhiteboardViewModel()
     let screenshots = ScreenshotService()
     let recorder = ScreenRecorder()
     let live = LiveBroadcaster()
@@ -142,10 +143,13 @@ final class AppEnvironment: ObservableObject {
         if settings.showMenuBarSpeed {
             menuBar.show()
             if speedObservation == nil {
-                speedObservation = networkSpeeds.objectWillChange
-                    .sink { [weak self] _ in
-                        // objectWillChange fires before the new value lands.
-                        Task { @MainActor in self?.menuBar.render() }
+                // Observe the actual values rather than `objectWillChange`,
+                // which fires before @Published stores them and can leave the
+                // status item rendering the previous sample indefinitely.
+                speedObservation = networkSpeeds.$downloadRate
+                    .combineLatest(networkSpeeds.$uploadRate)
+                    .sink { [weak self] download, upload in
+                        self?.menuBar.render(download: download, upload: upload)
                     }
             }
         } else {

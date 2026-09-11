@@ -55,8 +55,8 @@ UNSIGNED := CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY= DEVELOPMENT_TEAM=
 # designated requirement, so TCC grants survive a rebuild — see docs/SIGNING.md.
 IDENTITY ?= MacVital Local
 
-APP := /Applications/MacVital.app
-PRODUCT := $(DERIVED)/Build/Products/$(CONFIG)/MacVital.app
+APP := /Applications/PureMark.app
+PRODUCT := $(DERIVED)/Build/Products/$(CONFIG)/PureMark.app
 
 .PHONY: help project build build-signed build-selfsigned test run install \
         verify-signing check-team clean archive lint helper-log icon
@@ -154,7 +154,7 @@ test: project
 		-derivedDataPath $(DERIVED_TEST) $(UNSIGNED) test
 
 run: build
-	open $(DERIVED)/Build/Products/$(CONFIG)/MacVital.app
+	open $(PRODUCT)
 
 # `ditto` rather than `cp -R` — it preserves the extended attributes a code
 # signature depends on. Verifies on both sides of the copy: an app whose bundle
@@ -165,7 +165,7 @@ install:
 		echo "没有 $(CONFIG) 构建产物，先跑 make build CONFIG=$(CONFIG)"; \
 		echo "（或 make build-selfsigned CONFIG=$(CONFIG)，授权能跨重编译保留）"; exit 1; }
 	@if [ "$(CONFIG)" = "Debug" ]; then \
-		echo "⚠ 正在把 Debug 产物装进 $(APP)：里面带着 MacVital.debug.dylib 和 __preview.dylib，"; \
+		echo "⚠ 正在把 Debug 产物装进 $(APP)：里面带着 PureMark.debug.dylib 和 __preview.dylib，"; \
 		echo "  只在 Xcode 里有意义。日常用请 make build-selfsigned && make install。"; \
 	fi
 	@# Verify the *source* before it goes anywhere. Verifying only the installed
@@ -174,8 +174,10 @@ install:
 	@# verify makes TCC fail every requirement check while the switch in System
 	@# Settings still shows as on.
 	@$(MAKE) --no-print-directory verify-signing APP="$(PRODUCT)"
+	pkill -f "PureMark.app/Contents/MacOS/PureMark" 2>/dev/null || true
 	pkill -f "MacVital.app/Contents/MacOS/MacVital" 2>/dev/null || true
 	rm -rf "$(APP)"
+	rm -rf "/Applications/MacVital.app"
 	ditto "$(PRODUCT)" "$(APP)"
 	@/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Versions/A/Support/lsregister -f "$(APP)"
 	@$(MAKE) --no-print-directory verify-signing
@@ -231,7 +233,7 @@ verify-signing:
 
 archive: project
 	xcodebuild -project $(PROJECT) -scheme $(SCHEME) -configuration Release \
-		-archivePath $(DERIVED)/MacVital.xcarchive archive
+		-archivePath $(DERIVED)/PureMark.xcarchive archive
 
 # Regenerate the app icon from Tools/MakeAppIcon.swift. The .appiconset holds
 # only rendered PNGs, so without this the artwork is unreproducible — editing

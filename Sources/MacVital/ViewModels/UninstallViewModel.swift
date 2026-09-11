@@ -138,6 +138,7 @@ final class UninstallViewModel: ObservableObject {
     }
 
     func select(_ app: InstalledAppIndex.App) async {
+        guard !isRemoving else { return }
         selectedApp = app
         rows = []
         selection = []
@@ -324,6 +325,7 @@ final class UninstallViewModel: ObservableObject {
     }
 
     func clearSelection() {
+        guard !isRemoving else { return }
         planGeneration += 1
         isPlanning = false
         selectedApp = nil
@@ -355,7 +357,7 @@ final class UninstallViewModel: ObservableObject {
     // MARK: - Execute
 
     func uninstall() async {
-        guard !selection.isEmpty else { return }
+        guard !isRemoving, !isPlanning, !selection.isEmpty else { return }
         isRemoving = true
         defer { isRemoving = false }
 
@@ -381,7 +383,7 @@ final class UninstallViewModel: ObservableObject {
         if let app = selectedApp {
             loadApps()
             let previousSummary = summary
-            await select(app)
+            await plan(for: app, preservingSelection: true)
             summary = previousSummary
             // Whatever the planner still finds is, by definition, what the
             // uninstall did not get. Rows locked by a deny reason count too —

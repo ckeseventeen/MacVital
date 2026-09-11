@@ -264,7 +264,7 @@ private struct OccupierActions: View {
             }
 
             if notPermitted {
-                Text("这个进程属于系统或其他用户，MacVital 不以 root 运行，无法结束它。")
+                Text("这个进程属于系统或其他用户，PureMark 不以 root 运行，无法结束它。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

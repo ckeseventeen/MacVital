@@ -29,6 +29,7 @@ final class ScanViewModel: ObservableObject {
     @Published private(set) var progressFraction: Double = 0
     @Published private(set) var lastScanDuration: TimeInterval = 0
     @Published private(set) var deniedCount: Int = 0
+    @Published private(set) var scanWarnings: [String] = []
     @Published var errorMessage: String?
     @Published private(set) var cleanupProgress: (done: Int, total: Int) = (0, 0)
 
@@ -86,6 +87,7 @@ final class ScanViewModel: ObservableObject {
         findings = []
         selection = []
         errorMessage = nil
+        scanWarnings = []
         progressFraction = 0
         progressText = "准备扫描"
 
@@ -98,7 +100,7 @@ final class ScanViewModel: ObservableObject {
         // `self`, which Swift 6 rejects outright.
         let onProgress: @Sendable (ScanProgress) -> Void = { [weak self] progress in
             Task { @MainActor in
-                guard let self, self.scanGeneration == generation else { return }
+                guard let self, self.scanGeneration == generation, self.isScanning else { return }
                 self.progressText = [progress.category?.title, progress.message]
                     .compactMap { $0 }
                     .joined(separator: " · ")
@@ -121,6 +123,7 @@ final class ScanViewModel: ObservableObject {
                 )
                 await MainActor.run { [weak self] in
                     guard let self, self.scanGeneration == generation else { return }
+                    self.scanWarnings = result.warnings
                     self.findings = result.findings
                     self.selection = result.defaultSelection
                     self.lastScanDuration = result.duration
@@ -146,6 +149,7 @@ final class ScanViewModel: ObservableObject {
     }
 
     func cancelScan() {
+        guard isScanning else { return }
         scanTask?.cancel()
         scanTask = nil
         scanGeneration += 1
@@ -162,7 +166,8 @@ final class ScanViewModel: ObservableObject {
     /// Cheap on purpose: it re-evaluates existing items rather than re-walking
     /// the disk. Same reason `UninstallViewModel.replan` exists.
     func revalidate() async {
-        guard !findings.isEmpty else { return }
+        guard phase == .results, !findings.isEmpty else { return }
+        let generation = scanGeneration
         let rules = environment.rules
         let quarantineRoot = environment.quarantineRoot
         let snapshot = findings
@@ -180,6 +185,7 @@ final class ScanViewModel: ObservableObject {
             }
         }.value
 
+        guard scanGeneration == generation, phase == .results else { return }
         findings = updated
         deniedCount = updated.filter { $0.decision.isDenied }.count
         // A row that just became inadmissible must not stay ticked. The
@@ -208,6 +214,12 @@ final class ScanViewModel: ObservableObject {
         selection.formUnion(CleanPlanBuilder.selectAll(in: category, findings: findings))
     }
 
+    /// Called only after the user confirms that global selection also includes
+    /// large files, duplicates, and empty folders.
+    func selectEverySelectable() {
+        selection.formUnion(CleanPlanBuilder.selectEverySelectable(in: findings))
+    }
+
     /// Categories the current scope's "select all" deliberately leaves alone,
     /// so the UI can say so rather than looking broken.
     var categoriesNeedingExplicitSelection: [ScanCategory] {
@@ -232,6 +244,7 @@ final class ScanViewModel: ObservableObject {
 
     func performCleanup() async {
         guard phase == .results, !selection.isEmpty else { return }
+        scanGeneration += 1 // Invalidate any revalidation still evaluating old rows.
         phase = .cleaning
         cleanupProgress = (0, selection.count)
 

@@ -100,7 +100,7 @@ struct QuarantineView: View {
             Button(model.isReaping ? "清理中…" : "清理") {
                 Task { await model.discardOrphans() }
             }
-            .disabled(model.isReaping)
+            .disabled(model.isBusy)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
@@ -166,10 +166,10 @@ struct QuarantineView: View {
                     VStack(spacing: 4) {
                         Button("还原") { Task { await model.restore(record) } }
                             .controlSize(.small)
-                            .disabled(model.busyID == record.id)
+                            .disabled(model.isBusy)
                         Button("立即删除") { Task { await model.purge(record) } }
                             .controlSize(.small)
-                            .disabled(model.busyID == record.id)
+                            .disabled(model.isBusy)
                     }
                 }
             }
@@ -188,7 +188,7 @@ struct QuarantineView: View {
                 .foregroundStyle(.secondary)
             Spacer()
             Button("清空隔离区", role: .destructive) { confirmPurgeAll = true }
-                .disabled(model.records.isEmpty)
+                .disabled(model.records.isEmpty || model.isBusy)
         }
         .padding(12)
     }

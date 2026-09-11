@@ -111,4 +111,11 @@ public enum CleanPlanBuilder {
         }
         return selected
     }
+
+    /// Select every admissible finding after the UI has obtained a separate,
+    /// explicit confirmation for the high-impact categories. Denied findings
+    /// remain impossible to select.
+    public static func selectEverySelectable(in findings: [Finding]) -> Set<UUID> {
+        Set(findings.filter(\.isSelectable).map(\.id))
+    }
 }

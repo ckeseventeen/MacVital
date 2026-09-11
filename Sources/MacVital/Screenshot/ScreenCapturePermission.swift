@@ -40,10 +40,10 @@ enum ScreenCapturePermission {
     /// the requirement check fails against that one and the switch in System
     /// Settings has no effect no matter how many times it is toggled.
     static let message = """
-        没有「屏幕录制」权限。请到「系统设置 → 隐私与安全性 → 屏幕录制」中勾选 MacVital，然后重启 App。
+        没有「屏幕录制」权限。请到「系统设置 → 隐私与安全性 → 屏幕录制」中勾选 PureMark，然后重启 App。
 
-        如果列表里已经有 MacVital 却依然不行，多半是系统匹配到了另一份声明同样 bundle id 的 MacVital.app\
-        （构建目录里遗留的那份最常见）：先删掉多余的副本，再用「−」移除条目并重新添加 /Applications/MacVital.app。
+        如果列表里已经有 PureMark 却依然不行，多半是系统匹配到了另一份声明同样 bundle id 的 PureMark.app\
+        （构建目录里遗留的那份最常见）：先删掉多余的副本，再用「−」移除条目并重新添加 /Applications/PureMark.app。
         """
 
     static func openSettings() {

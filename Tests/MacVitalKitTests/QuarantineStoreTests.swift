@@ -34,6 +34,84 @@ final class QuarantineStoreTests: XCTestCase {
         )
     }
 
+    func testFailedRestoreMarkerKeepsRecordVisibleAndRetryable() async throws {
+        try await assertFailedMarkerCanRetry(restoring: true)
+    }
+
+    func testFailedPurgeMarkerKeepsRecordVisibleAndRetryable() async throws {
+        try await assertFailedMarkerCanRetry(restoring: false)
+    }
+
+    private func assertFailedMarkerCanRetry(restoring: Bool) async throws {
+        let source = try makeSource("marker.txt")
+        let record = try await store.store(
+            item: item(at: source), decision: .allow("cache.userCaches", "test"), assessment: nil
+        )
+        let manifest = store.root.appendingPathComponent("manifest.json")
+        let backup = try Data(contentsOf: manifest)
+        try FileManager.default.removeItem(at: manifest)
+        try FileManager.default.createDirectory(at: manifest, withIntermediateDirectories: false)
+        do {
+            if restoring { try await store.restore(id: record.id) }
+            else { try await store.purge(id: record.id) }
+            XCTFail("The pending marker must be durable before touching the payload")
+        } catch {}
+        let visible = await store.allRecords()
+        XCTAssertEqual(visible.map(\.id), [record.id])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: record.storedPath))
+        try FileManager.default.removeItem(at: manifest)
+        try backup.write(to: manifest)
+        if restoring { try await store.restore(id: record.id) }
+        else { try await store.purge(id: record.id) }
+        let remaining = await store.allRecords()
+        XCTAssertTrue(remaining.isEmpty)
+        XCTAssertEqual(FileManager.default.fileExists(atPath: source.path), restoring)
+    }
+
+    func testSweepDoesNotPurgeRecordWhoseRestoreStartedWhileAwaitingHelper() async throws {
+        let expiredStore = QuarantineStore(root: sandbox.appendingPathComponent("Concurrent"), retentionDays: -1)
+        let first = try await expiredStore.store(
+            item: item(at: makeSource("first.txt")), decision: .allow("cache.userCaches", "test"), assessment: nil
+        )
+        let second = try await expiredStore.store(
+            item: item(at: makeSource("second.txt")), decision: .privileged("cache.userCaches", "test"),
+            assessment: nil, privilegedMove: { source, destination in
+                let target = URL(fileURLWithPath: destination)
+                try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try FileManager.default.moveItem(atPath: source, toPath: destination)
+                return destination
+            }
+        )
+        // Make the first local delete fail so the sweep suspends in its helper.
+        try FileManager.default.removeItem(at: URL(fileURLWithPath: first.storedPath).deletingLastPathComponent())
+        let sweepEntered = expectation(description: "sweep reached helper")
+        let restoreEntered = expectation(description: "restore reached helper")
+        let sweepGate = QuarantineTestGate()
+        let restoreGate = QuarantineTestGate()
+        let sweep = Task {
+            await expiredStore.sweepExpired { _ in
+                sweepEntered.fulfill()
+                await sweepGate.wait()
+            }
+        }
+        await fulfillment(of: [sweepEntered], timeout: 5)
+        let restore = Task {
+            try await expiredStore.restore(id: second.id) { source, destination in
+                restoreEntered.fulfill()
+                await restoreGate.wait()
+                try FileManager.default.moveItem(atPath: source, toPath: destination)
+            }
+        }
+        await fulfillment(of: [restoreEntered], timeout: 5)
+        await sweepGate.release()
+        let purged = await sweep.value
+        XCTAssertEqual(purged, 1)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: second.storedPath))
+        await restoreGate.release()
+        try await restore.value
+        XCTAssertTrue(FileManager.default.fileExists(atPath: second.originalPath))
+    }
+
     func testStoreMovesRatherThanDeletes() async throws {
         let source = try makeSource("a.txt")
         let record = try await store.store(
@@ -521,5 +599,19 @@ final class QuarantineRollbackTests: XCTestCase {
             survivors, ["privileged.txt"],
             "the moved file must survive in its container rather than being deleted"
         )
+    }
+}
+
+private actor QuarantineTestGate {
+    private var isOpen = false
+    private var continuation: CheckedContinuation<Void, Never>?
+    func wait() async {
+        guard !isOpen else { return }
+        await withCheckedContinuation { continuation = $0 }
+    }
+    func release() {
+        isOpen = true
+        continuation?.resume()
+        continuation = nil
     }
 }

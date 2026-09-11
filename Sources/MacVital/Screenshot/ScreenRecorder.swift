@@ -57,6 +57,7 @@ final class ScreenRecorder: NSObject, ObservableObject {
     func start(excluding ownWindow: NSWindow?) async {
         guard state == .idle else { return }
         state = .starting
+        errorMessage = nil
 
         do {
             let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
@@ -353,6 +354,7 @@ private final class FrameSink: NSObject, SCStreamOutput, @unchecked Sendable {
 extension ScreenRecorder: SCStreamDelegate {
     nonisolated func stream(_ stream: SCStream, didStopWithError error: Error) {
         Task { @MainActor in
+            guard self.stream === stream else { return }
             self.errorMessage = Self.describe(error)
             await self.stop()
         }

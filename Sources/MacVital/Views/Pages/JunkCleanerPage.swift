@@ -9,11 +9,19 @@ import MacVitalKit
 struct JunkCleanerPage: View {
     @EnvironmentObject private var environment: AppEnvironment
     @EnvironmentObject private var model: ScanViewModel
+    @State private var confirmingSelectAll = false
 
     var body: some View {
         VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 22) {
                 header
+                if !model.scanWarnings.isEmpty {
+                    Label("部分扫描未完成，结果不完整：\n" + model.scanWarnings.joined(separator: "\n"),
+                          systemImage: "exclamationmark.triangle")
+                        .font(.callout)
+                        .foregroundStyle(.orange)
+                        .textSelection(.enabled)
+                }
                 // The summary card is about results, so it only appears when
                 // there are some. It used to render for anything that was not
                 // idle-and-empty, which meant that during a scan — phase
@@ -42,6 +50,18 @@ struct JunkCleanerPage: View {
             } else {
                 Spacer()
             }
+        }
+        .confirmationDialog(
+            "全选所有可清理项目？",
+            isPresented: $confirmingSelectAll,
+            titleVisibility: .visible
+        ) {
+            Button("全选 \(selectableCount) 项") {
+                model.selectEverySelectable()
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("这会同时勾选 \(explicitCategoryNames)。请确认这些文件确实可以清理；被安全规则锁定的项目不会被选中。")
         }
     }
 
@@ -245,8 +265,15 @@ struct JunkCleanerPage: View {
     private var selectAllHelp: String {
         let skipped = model.categoriesNeedingExplicitSelection
         guard !skipped.isEmpty else { return "勾选当前范围内所有可清理的项目" }
-        return "勾选所有可清理的项目，但不含 \(skipped.map(\.title).joined(separator: "、"))"
-            + " —— 这几类需要你逐项确认。先在上方选中该分类，再用「全选本类」。"
+        return "勾选所有可清理的项目；包含 \(skipped.map(\.title).joined(separator: "、")) 时会先请你确认"
+    }
+
+    private var selectableCount: Int {
+        model.findings.filter(\.isSelectable).count
+    }
+
+    private var explicitCategoryNames: String {
+        model.categoriesNeedingExplicitSelection.map(\.title).joined(separator: "、")
     }
 
     // MARK: - Footer
@@ -274,7 +301,12 @@ struct JunkCleanerPage: View {
             Spacer()
 
             Button(model.focusedCategory == nil ? "全选" : "全选本类") {
-                model.selectAll(in: model.focusedCategory)
+                if model.focusedCategory == nil,
+                   !model.categoriesNeedingExplicitSelection.isEmpty {
+                    confirmingSelectAll = true
+                } else {
+                    model.selectAll(in: model.focusedCategory)
+                }
             }
             .buttonStyle(.link)
             .font(.system(size: 13))

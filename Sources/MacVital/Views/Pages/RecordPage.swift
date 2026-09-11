@@ -65,7 +65,7 @@ struct RecordPage: View {
                             .font(.system(size: 16, weight: .medium))
                             .foregroundStyle(Theme.label)
                         Text(recorder.state.isRecording
-                             ? "已录 \(Self.clock(elapsed)) · MacVital 自己的窗口不会出现在画面里"
+                             ? "已录 \(Self.clock(elapsed)) · PureMark 自己的窗口不会出现在画面里"
                              : "全屏录制为 H.264 MP4，本窗口会自动从画面中排除。")
                             .font(.system(size: 13))
                             .foregroundStyle(Theme.secondaryLabel)
@@ -164,12 +164,13 @@ struct RecordPage: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     Spacer(minLength: 0)
-                    Button(live.isBroadcasting ? "停止直播" : "开始直播") {
+                    Button(live.isStarting ? "启动中…" : (live.isBroadcasting ? "停止直播" : "开始直播")) {
                         Task { await live.toggle(excluding: mainWindow) }
                     }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.large)
                     .tint(live.isBroadcasting ? Theme.junk : Color(hex: 0x534AB7))
+                    .disabled(live.isStarting)
                 }
 
                 if live.isBroadcasting {

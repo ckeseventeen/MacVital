@@ -29,8 +29,8 @@ final class WhiteboardViewModel: ObservableObject {
 
     var style: AnnotationStyle {
         AnnotationStyle(
-            color: ScreenPenController.palette[colorIndex],
-            lineWidth: ScreenPenController.widths[widthIndex]
+            color: AnnotationPalette.colors[colorIndex],
+            lineWidth: AnnotationPalette.widths[widthIndex]
         )
     }
 
@@ -83,8 +83,10 @@ final class WhiteboardViewModel: ObservableObject {
         canvas.backdrop = current.image
         canvas.document.load(current.objects)
         canvas.onChange = { [weak self] in
-            Task { @MainActor in self?.refreshUndoState() }
+            self?.commitCurrent()
+            self?.refreshUndoState()
         }
+        refreshUndoState()
     }
 
     /// Strictly `canUndo`, matching `ScreenPenController`.

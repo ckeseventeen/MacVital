@@ -21,7 +21,7 @@ settings:
     SWIFT_VERSION: "5.0"
     SWIFT_STRICT_CONCURRENCY: minimal
     MARKETING_VERSION: "1.0.1"
-    CURRENT_PROJECT_VERSION: "2"
+    CURRENT_PROJECT_VERSION: "4"
     DEVELOPMENT_TEAM: $(MACVITAL_TEAM_ID)
     CODE_SIGN_IDENTITY: "Developer ID Application"
     ENABLE_HARDENED_RUNTIME: YES
@@ -91,7 +91,7 @@ targets:
           destination: executables
     settings:
       base:
-        PRODUCT_NAME: MacVital
+        PRODUCT_NAME: PureMark
         PRODUCT_BUNDLE_IDENTIFIER: com.macvital.MacVital
         INFOPLIST_FILE: Sources/MacVital/Resources/Info.plist
         CODE_SIGN_ENTITLEMENTS: Sources/MacVital/Resources/MacVital.entitlements
@@ -104,11 +104,27 @@ targets:
     platform: macOS
     sources:
       - path: Tests/MacVitalKitTests
+      # Pure parser used by the menu-bar network monitor. Compiling it into
+      # this target keeps the App target out of the safety-core test scheme.
+      - path: Sources/MacVital/App/NetworkRouteParser.swift
     dependencies:
       - target: MacVitalKit
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.macvital.MacVitalKitTests
+
+  MacVitalAppLogicTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: Tests/MacVitalAppLogicTests
+      - path: Sources/MacVital/Annotate/AnnotationModel.swift
+      - path: Sources/MacVital/Annotate/AnnotationCanvasView.swift
+      - path: Sources/MacVital/Annotate/AnnotationPalette.swift
+      - path: Sources/MacVital/Annotate/WhiteboardViewModel.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.macvital.MacVitalAppLogicTests
 
 schemes:
   # Tests get their own scheme so `xcodebuild test` never builds the app.
@@ -126,10 +142,12 @@ schemes:
     build:
       targets:
         MacVitalKitTests: [test]
+        MacVitalAppLogicTests: [test]
     test:
       config: Debug
       targets:
         - MacVitalKitTests
+        - MacVitalAppLogicTests
 
   MacVital:
     build:

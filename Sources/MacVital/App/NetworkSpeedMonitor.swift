@@ -10,10 +10,7 @@ import Darwin
 /// bogus spike or a dead second. `if_msghdr2` carries `if_data64`.
 @MainActor
 final class NetworkSpeedMonitor: ObservableObject {
-    struct Sample: Equatable {
-        var bytesIn: UInt64 = 0
-        var bytesOut: UInt64 = 0
-    }
+    typealias Sample = NetworkByteCounters
 
     /// Bytes per second, smoothed.
     @Published private(set) var downloadRate: Double = 0
@@ -86,33 +83,11 @@ final class NetworkSpeedMonitor: ObservableObject {
             return Sample()
         }
 
-        var sample = Sample()
-        buffer.withUnsafeBytes { raw in
-            guard let base = raw.baseAddress else { return }
-            let validLength = min(length, raw.count)
-            var offset = 0
-            while offset + MemoryLayout<if_msghdr>.size <= validLength {
-                let header = base.advanced(by: offset).assumingMemoryBound(to: if_msghdr.self)
-                let messageLength = Int(header.pointee.ifm_msglen)
-                guard messageLength >= MemoryLayout<if_msghdr>.size,
-                      offset + messageLength <= validLength
-                else { break }
-
-                if header.pointee.ifm_type == RTM_IFINFO2,
-                   messageLength >= MemoryLayout<if_msghdr2>.size {
-                    let extended = base.advanced(by: offset).assumingMemoryBound(to: if_msghdr2.self)
-                    let data = extended.pointee.ifm_data
-                    // Loopback carries every local connection and would report
-                    // traffic that never touches the network.
-                    if data.ifi_type != UInt8(IFT_LOOP) {
-                        sample.bytesIn &+= data.ifi_ibytes
-                        sample.bytesOut &+= data.ifi_obytes
-                    }
-                }
-                offset += messageLength
-            }
+        return buffer.withUnsafeBytes { raw in
+            NetworkRouteParser.parse(
+                UnsafeRawBufferPointer(rebasing: raw.prefix(min(length, raw.count)))
+            )
         }
-        return sample
     }
 }
 

@@ -136,8 +136,8 @@ struct PermissionBanner: View {
                 if permissions.grantsExpireOnRebuild {
                     BannerNote(
                         "这是 ad-hoc 签名的本地构建：没有证书可以绑定，macOS 只能按可执行文件的哈希记住授权，"
-                        + "而每次重新编译哈希都会变。如果设置里已经有 MacVital 却依然显示未获得，"
-                        + "请先用「−」把它移除，再重新添加当前这份 /Applications/MacVital.app。"
+                        + "而每次重新编译哈希都会变。如果设置里已经有 PureMark 却依然显示未获得，"
+                        + "请先用「−」把它移除，再重新添加当前这份 /Applications/PureMark.app。"
                         + "改用 make build-selfsigned 可以一劳永逸。",
                         icon: "exclamationmark.triangle.fill"
                     )

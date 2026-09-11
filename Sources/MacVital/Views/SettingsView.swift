@@ -60,14 +60,14 @@ struct GeneralSettings: View {
                     .onChange(of: settings.showMenuBarSpeed) { _, _ in
                         environment.applyMenuBarSetting()
                     }
-                Toggle("在菜单栏显示屏幕画笔", isOn: $settings.showMenuBarPen)
+                Toggle("在菜单栏显示快捷工具", isOn: $settings.showMenuBarPen)
                     .onChange(of: settings.showMenuBarPen) { _, _ in
                         environment.applyMenuBarSetting()
                     }
             } header: {
                 Text("菜单栏")
             } footer: {
-                Text("网速每秒读取一次网卡计数器，点开还能看到可用空间和隔离区占用。画笔图标一点即开，esc 退出。两者关闭后都不再占用资源。")
+                Text("网速每秒读取一次网卡计数器，点开还能看到可用空间和隔离区占用。快捷工具包含截图和屏幕画笔；画笔开启后按 esc 退出。两者关闭后都不再占用资源。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

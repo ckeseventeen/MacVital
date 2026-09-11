@@ -10,9 +10,8 @@ import MacVitalKit
 @MainActor
 final class MenuBarController: NSObject, NSMenuDelegate {
     private var statusItem: NSStatusItem?
-    /// The pen gets its own item rather than a row in the speed menu: it is a
-    /// toggle you reach for mid-presentation, and burying it two clicks deep
-    /// defeats the point.
+    /// Screen tools get their own item rather than rows in the speed menu:
+    /// both the pen and screenshots are used while another app is in front.
     private var penItem: NSStatusItem?
     private let speeds: NetworkSpeedMonitor
     private weak var environment: AppEnvironment?
@@ -21,6 +20,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     private let upRow = NSMenuItem(title: "", action: nil, keyEquivalent: "")
     private let diskRow = NSMenuItem(title: "", action: nil, keyEquivalent: "")
     private let quarantineRow = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+    private let penToggleRow = NSMenuItem(title: "开启屏幕画笔", action: nil, keyEquivalent: "")
 
     init(speeds: NetworkSpeedMonitor, environment: AppEnvironment) {
         self.speeds = speeds
@@ -31,7 +31,13 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     var isVisible: Bool { statusItem != nil }
 
     func show() {
-        guard statusItem == nil else { return }
+        if statusItem != nil {
+            // Re-applying settings should also heal a monitor whose timer was
+            // stopped while its status item survived.
+            speeds.start()
+            render()
+            return
+        }
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         item.button?.imagePosition = .noImage
         item.menu = makeMenu()
@@ -53,10 +59,9 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         guard penItem == nil else { return }
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         item.button?.image = NSImage(systemSymbolName: "pencil.tip.crop.circle",
-                                     accessibilityDescription: "屏幕画笔")
-        item.button?.toolTip = "屏幕画笔 — 点击开始，esc 退出"
-        item.button?.target = self
-        item.button?.action = #selector(togglePen)
+                                     accessibilityDescription: "快捷工具")
+        item.button?.toolTip = "快捷工具 — 截图与屏幕画笔"
+        item.menu = makeScreenToolsMenu()
         penItem = item
         refreshPenItem()
     }
@@ -72,8 +77,10 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     func refreshPenItem() {
         guard let button = penItem?.button, let pen = environment?.screenPen else { return }
         let name = pen.isActive ? "pencil.tip.crop.circle.fill" : "pencil.tip.crop.circle"
-        button.image = NSImage(systemSymbolName: name, accessibilityDescription: "屏幕画笔")
+        button.image = NSImage(systemSymbolName: name, accessibilityDescription: "快捷工具")
         button.contentTintColor = pen.isActive ? NSColor.controlAccentColor : nil
+        penToggleRow.title = pen.isActive ? "退出屏幕画笔" : "开启屏幕画笔"
+        penToggleRow.state = pen.isActive ? .on : .off
     }
 
     @objc private func togglePen() {
@@ -81,12 +88,59 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         refreshPenItem()
     }
 
+    private func makeScreenToolsMenu() -> NSMenu {
+        let menu = NSMenu()
+
+        penToggleRow.target = self
+        penToggleRow.action = #selector(togglePen)
+        menu.addItem(penToggleRow)
+        menu.addItem(.separator())
+
+        let screenshot = NSMenuItem(title: "截图", action: nil, keyEquivalent: "")
+        let screenshotMenu = NSMenu()
+        for mode in ScreenshotService.Mode.allCases {
+            let row = NSMenuItem(title: mode.title, action: #selector(captureScreen(_:)), keyEquivalent: "")
+            row.target = self
+            row.representedObject = mode.rawValue
+            row.image = NSImage(systemSymbolName: mode.symbolName, accessibilityDescription: mode.title)
+            screenshotMenu.addItem(row)
+        }
+        screenshot.submenu = screenshotMenu
+        menu.addItem(screenshot)
+
+        return menu
+    }
+
+    @objc private func captureScreen(_ sender: NSMenuItem) {
+        guard let rawMode = sender.representedObject as? String,
+              let mode = ScreenshotService.Mode(rawValue: rawMode),
+              let environment else { return }
+
+        let previousCapture = environment.screenshots.latest?.url
+        let mainWindow = NSApp.windows.first { $0.isVisible && $0.canBecomeMain }
+
+        Task {
+            await environment.screenshots.capture(mode: mode, hiding: mainWindow)
+
+            let hasNewCapture = environment.screenshots.latest?.url != previousCapture
+            let hasError = environment.screenshots.errorMessage != nil
+            guard hasNewCapture || hasError else { return }
+
+            environment.page = .screenshot
+            environment.showMainWindow()
+        }
+    }
+
     /// Called every time the monitor publishes. Cheap: two attributed strings.
     func render() {
+        render(download: speeds.downloadRate, upload: speeds.uploadRate)
+    }
+
+    func render(download: Double, upload: Double) {
         guard let button = statusItem?.button else { return }
         button.attributedTitle = Self.title(
-            download: speeds.downloadRate,
-            upload: speeds.uploadRate
+            download: download,
+            upload: upload
         )
     }
 
@@ -125,7 +179,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         menu.insertItem(NSMenuItem.separator(), at: 2)
         menu.addItem(.separator())
 
-        let open = NSMenuItem(title: "打开 MacVital", action: #selector(openWindow), keyEquivalent: "")
+        let open = NSMenuItem(title: "打开 PureMark", action: #selector(openWindow), keyEquivalent: "")
         open.target = self
         menu.addItem(open)
 

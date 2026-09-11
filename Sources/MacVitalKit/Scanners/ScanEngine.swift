@@ -5,12 +5,14 @@ public struct ScanResult: Sendable {
     public var defaultSelection: Set<UUID>
     public var duration: TimeInterval
     public var deniedCount: Int
+    public var warnings: [String]
 
-    public init(findings: [Finding], defaultSelection: Set<UUID>, duration: TimeInterval, deniedCount: Int) {
+    public init(findings: [Finding], defaultSelection: Set<UUID>, duration: TimeInterval, deniedCount: Int, warnings: [String] = []) {
         self.findings = findings
         self.defaultSelection = defaultSelection
         self.duration = duration
         self.deniedCount = deniedCount
+        self.warnings = warnings
     }
 }
 
@@ -106,7 +108,8 @@ public struct ScanEngine: Sendable {
         // arbitrary, and without this the winner of a path collision below
         // would change from run to run.
         var produced: [Int: [ScanItem]] = [:]
-        try await withThrowingTaskGroup(of: (Int, [ScanItem]).self) { group in
+        var failures: [Int: String] = [:]
+        try await withThrowingTaskGroup(of: (Int, [ScanItem], String?).self) { group in
             for (index, scanner) in active.enumerated() {
                 group.addTask {
                     do {
@@ -114,17 +117,18 @@ public struct ScanEngine: Sendable {
                             context: context,
                             progress: { aggregator.record($0) }
                         )
-                        return (index, items)
+                        return (index, items, nil)
                     } catch is CancellationError {
                         throw CancellationError()
                     } catch {
                         Log.scan.error("\(scanner.category.rawValue, privacy: .public) scanner failed: \(error.localizedDescription, privacy: .public)")
-                        return (index, [])
+                        return (index, [], "\(scanner.category.title)：\(error.localizedDescription)")
                     }
                 }
             }
-            for try await (index, items) in group {
+            for try await (index, items, failure) in group {
                 produced[index] = items
+                failures[index] = failure
             }
         }
 
@@ -173,6 +177,7 @@ public struct ScanEngine: Sendable {
             }
         }
 
+        try Task.checkCancellation()
         findings.sort { $0.rank > $1.rank }
         let selection = CleanPlanBuilder.defaultSelection(for: findings, rules: rules)
 
@@ -180,7 +185,8 @@ public struct ScanEngine: Sendable {
             findings: findings,
             defaultSelection: selection,
             duration: Date().timeIntervalSince(start),
-            deniedCount: deniedCount
+            deniedCount: deniedCount,
+            warnings: failures.keys.sorted().compactMap { failures[$0] }
         )
     }
 }

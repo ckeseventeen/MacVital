@@ -275,8 +275,7 @@ public actor QuarantineStore {
             throw QuarantineError.destinationOccupied(record.originalPath)
         }
 
-        records[index].pendingOperation = .restoring
-        try persist()
+        try beginOperation(.restoring, at: index)
 
         do {
             let parent = original.deletingLastPathComponent()
@@ -314,8 +313,7 @@ public actor QuarantineStore {
             throw QuarantineError.moveFailed("隔离记录正在处理或路径异常")
         }
 
-        records[index].pendingOperation = .purging
-        try persist()
+        try beginOperation(.purging, at: index)
         do {
             try await remove(record: record, privilegedDelete: privilegedDelete)
         } catch {
@@ -338,9 +336,9 @@ public actor QuarantineStore {
         var purged = 0
         for record in expired {
             do {
-                guard let index = records.firstIndex(where: { $0.id == record.id }) else { continue }
-                records[index].pendingOperation = .purging
-                try persist()
+                guard let index = records.firstIndex(where: { $0.id == record.id }),
+                      records[index].pendingOperation == nil else { continue }
+                try beginOperation(.purging, at: index)
                 try await remove(record: record, privilegedDelete: privilegedDelete)
                 records.removeAll { $0.id == record.id }
                 persistCompletedOperation("sweep", id: record.id)
@@ -540,6 +538,18 @@ public actor QuarantineStore {
             try persist()
         } catch {
             Log.quarantine.error("could not persist reconciled manifest: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    /// Publish a busy record only after its recovery marker reaches disk.
+    /// On write failure no filesystem mutation has begun, so keep it retryable.
+    private func beginOperation(_ operation: QuarantineOperation, at index: Int) throws {
+        records[index].pendingOperation = operation
+        do {
+            try persist()
+        } catch {
+            records[index].pendingOperation = nil
+            throw error
         }
     }
 

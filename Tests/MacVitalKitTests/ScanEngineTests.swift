@@ -12,6 +12,13 @@ private struct StubScanner: MacVitalKit.Scanner {
     }
 }
 
+private struct FailingScanner: MacVitalKit.Scanner {
+    let category: ScanCategory = .caches
+    func scan(context: ScanContext, progress: @Sendable (ScanProgress) -> Void) async throws -> [ScanItem] {
+        throw CocoaError(.fileReadNoPermission)
+    }
+}
+
 final class ScanEngineTests: XCTestCase {
 
     private var sandbox: URL!
@@ -50,6 +57,17 @@ final class ScanEngineTests: XCTestCase {
             quarantineRoot: sandbox.appendingPathComponent("Quarantine").path,
             scanners: scanners
         )
+    }
+
+    func testPartialFailureIsReportedAlongsideSuccessfulResults() async throws {
+        let path = try makeFile("surviving.bin")
+        let result = try await engine(scanners: [
+            FailingScanner(),
+            StubScanner(category: .largeFiles, items: [item(path: path, category: .largeFiles, kind: "大文件")]),
+        ]).scan(categories: [.caches, .largeFiles], progress: { _ in })
+        XCTAssertEqual(result.findings.count, 1)
+        XCTAssertEqual(result.warnings.count, 1)
+        XCTAssertTrue(result.warnings[0].contains(ScanCategory.caches.title))
     }
 
     // MARK: - Cross-scanner collisions

@@ -278,4 +278,13 @@ extension CleanPlanTests {
         let selected = CleanPlanBuilder.selectAll(in: .largeFiles, findings: [denied])
         XCTAssertTrue(selected.isEmpty)
     }
+
+    func testConfirmedSelectEverySelectableIncludesExplicitCategoriesButNotDeniedItems() {
+        let all = findings()
+        let denied = finding(admission: .deny, category: .caches)
+        let selected = CleanPlanBuilder.selectEverySelectable(in: all + [denied])
+
+        XCTAssertEqual(selected, Set(all.map(\.id)))
+        XCTAssertFalse(selected.contains(denied.id))
+    }
 }

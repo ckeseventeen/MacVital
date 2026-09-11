@@ -93,6 +93,7 @@ final class StartupViewModel: ObservableObject {
     // MARK: - Load
 
     func reload() async {
+        guard !isLoading else { return }
         isLoading = true
         defer { isLoading = false }
 
@@ -180,7 +181,7 @@ final class StartupViewModel: ObservableObject {
             return false
         case .notPermitted:
             stopMessage = "「\(row.item.displayName)」由系统或其他用户运行，"
-                + "MacVital 不以 root 运行，无法结束它。停用后下次开机不再启动。"
+                + "PureMark 不以 root 运行，无法结束它。停用后下次开机不再启动。"
             return true
         }
     }
@@ -215,7 +216,7 @@ final class StartupViewModel: ObservableObject {
     /// retention window, and the operation goes through the same rule engine
     /// and privileged helper as every other removal.
     func disableSelected() async {
-        guard !selection.isEmpty else { return }
+        guard !isRemoving, !isLoading, !selection.isEmpty else { return }
         isRemoving = true
         defer { isRemoving = false }
 

@@ -89,9 +89,10 @@ struct AppShell: View {
             Image(nsImage: NSApp.applicationIconImage)
                 .resizable()
                 .interpolation(.high)
-                .frame(width: 30, height: 30)
-            Text("MacVital")
-                .font(.system(size: 16, weight: .medium))
+                .frame(width: 32, height: 32)
+                .accessibilityHidden(true)
+            Text("PureMark")
+                .font(.system(size: 17, weight: .medium))
                 .foregroundStyle(Theme.label)
             Spacer(minLength: 0)
         }
@@ -113,7 +114,7 @@ struct AppShell: View {
     private func navSection(_ title: String, pages: [AppPage]) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(title)
-                .font(.system(size: 10, weight: .semibold))
+                .font(.system(size: 11, weight: .semibold))
                 .tracking(0.7)
                 .foregroundStyle(Theme.tertiaryLabel)
                 .padding(.leading, 11)
@@ -149,7 +150,7 @@ struct AppShell: View {
             Divider().overlay(Theme.separator)
                 .padding(.bottom, 4)
             Text("存储空间")
-                .font(.system(size: 11))
+                .font(.system(size: 12))
                 .foregroundStyle(Theme.tertiaryLabel)
 
             if let disk = environment.diskSpace {
@@ -164,11 +165,11 @@ struct AppShell: View {
                 .frame(height: 4)
 
                 Text("已用 \(ByteFormat.string(disk.used)) / \(ByteFormat.string(disk.total))")
-                    .font(.system(size: 11))
+                    .font(.system(size: 12))
                     .foregroundStyle(Theme.secondaryLabel)
             } else {
                 Text("读取中…")
-                    .font(.system(size: 11))
+                    .font(.system(size: 12))
                     .foregroundStyle(Theme.tertiaryLabel)
             }
         }
@@ -205,7 +206,7 @@ struct AppShell: View {
             case .annotate:
                 AnnotatePage()
             case .whiteboard:
-                WhiteboardPage()
+                WhiteboardPage(model: environment.whiteboard)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -233,11 +234,11 @@ private struct NavRow: View {
                         in: RoundedRectangle(cornerRadius: 8, style: .continuous)
                     )
                 Text(page.title)
-                    .font(.system(size: 14, weight: isActive ? .medium : .regular))
+                    .font(.system(size: 15, weight: isActive ? .medium : .regular))
                 Spacer(minLength: 4)
                 if let badge {
                     Text(badge)
-                        .font(.system(size: 11, weight: .medium))
+                        .font(.system(size: 12, weight: .medium))
                         .monospacedDigit()
                         .foregroundStyle(isActive ? Theme.accent : Theme.secondaryLabel)
                 }

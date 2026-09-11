@@ -10,7 +10,10 @@ final class QuarantineViewModel: ObservableObject {
     /// restorable, never swept. See `QuarantineStore.orphanedContainers`.
     @Published private(set) var orphans: [QuarantineStore.Orphan] = []
     @Published var errorMessage: String?
-    @Published var busyID: UUID?
+    @Published private(set) var busyID: UUID?
+    @Published private(set) var isPurgingAll = false
+
+    var isBusy: Bool { busyID != nil || isReaping || isPurgingAll }
     @Published private(set) var isReaping = false
 
     private let environment: AppEnvironment
@@ -28,13 +31,14 @@ final class QuarantineViewModel: ObservableObject {
         records = await environment.quarantine.allRecords()
         orphans = await environment.quarantine.orphanedContainers()
         await environment.refreshQuarantine()
+        environment.refreshDiskSpace()
     }
 
     /// Collect every orphan in one go. There is nothing to choose between them
     /// — none is reachable from the UI and none can be restored — so a per-row
     /// list would be busywork.
     func discardOrphans() async {
-        guard !orphans.isEmpty else { return }
+        guard !isBusy, !orphans.isEmpty else { return }
         isReaping = true
         defer { isReaping = false }
 
@@ -67,6 +71,8 @@ final class QuarantineViewModel: ObservableObject {
     }
 
     func restore(_ record: QuarantineRecord) async {
+        guard !isBusy else { return }
+        errorMessage = nil
         busyID = record.id
         defer { busyID = nil }
         do {
@@ -78,6 +84,8 @@ final class QuarantineViewModel: ObservableObject {
     }
 
     func purge(_ record: QuarantineRecord) async {
+        guard !isBusy else { return }
+        errorMessage = nil
         busyID = record.id
         defer { busyID = nil }
         do {
@@ -94,6 +102,10 @@ final class QuarantineViewModel: ObservableObject {
     /// nothing at all and say nothing about it — while the single-row 立即删除
     /// beside it surfaced the very same error.
     func purgeAll() async {
+        guard !isBusy else { return }
+        isPurgingAll = true
+        errorMessage = nil
+        defer { isPurgingAll = false }
         var failures: [String] = []
         for record in records {
             do {

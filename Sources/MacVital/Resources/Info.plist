@@ -11,9 +11,9 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>MacVital</string>
+	<string>PureMark</string>
 	<key>CFBundleDisplayName</key>
-	<string>MacVital</string>
+	<string>PureMark</string>
 	<key>CFBundleIconName</key>
 	<string>AppIcon</string>
 	<key>CFBundlePackageType</key>
@@ -27,7 +27,7 @@
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.utilities</string>
 	<key>NSHumanReadableCopyright</key>
-	<string>MacVital</string>
+	<string>PureMark</string>
 	<key>NSSupportsAutomaticTermination</key>
 	<false/>
 	<key>NSSupportsSuddenTermination</key>
@@ -36,12 +36,12 @@
 	     user's terms — a vague string here is the difference between the
 	     permission being granted and the app being uninstalled. -->
 	<key>NSDesktopFolderUsageDescription</key>
-	<string>MacVital 需要读取桌面上的项目目录，才能找出 node_modules 等可重建的构建产物。</string>
+	<string>PureMark 需要读取桌面上的项目目录，才能找出 node_modules 等可重建的构建产物。</string>
 	<key>NSDocumentsFolderUsageDescription</key>
-	<string>MacVital 需要读取文稿中的项目目录，才能找出可重建的构建产物和重复文件。</string>
+	<string>PureMark 需要读取文稿中的项目目录，才能找出可重建的构建产物和重复文件。</string>
 	<key>NSDownloadsFolderUsageDescription</key>
-	<string>MacVital 需要读取下载目录，才能列出其中的大文件和重复文件。</string>
+	<string>PureMark 需要读取下载目录，才能列出其中的大文件和重复文件。</string>
 	<key>NSRemovableVolumesUsageDescription</key>
-	<string>MacVital 需要访问外置磁盘，才能统计其中的大文件。</string>
+	<string>PureMark 需要访问外置磁盘，才能统计其中的大文件。</string>
 </dict>
 </plist>

@@ -24,6 +24,8 @@ import ScreenCaptureKit
 final class LiveBroadcaster: NSObject, ObservableObject {
 
     @Published private(set) var isBroadcasting = false
+    @Published private(set) var isStarting = false
+    private var generation = 0
     @Published private(set) var viewerCount = 0
     @Published private(set) var addresses: [String] = []
     @Published var errorMessage: String?
@@ -84,20 +86,29 @@ final class LiveBroadcaster: NSObject, ObservableObject {
     }
 
     func start(excluding ownWindow: NSWindow?) async {
-        guard !isBroadcasting else { return }
+        guard !isBroadcasting, !isStarting else { return }
+        generation += 1
+        let session = generation
+        isStarting = true
+        errorMessage = nil
+        defer { if generation == session { isStarting = false } }
         do {
             sessionToken = BroadcastRoute.makeToken()
-            try startServer()
-            try await startCapture(excluding: ownWindow)
+            try startServer(session: session)
+            try await startCapture(excluding: ownWindow, session: session)
+            guard generation == session else { return }
             addresses = Self.localAddresses()
             isBroadcasting = true
         } catch {
+            guard generation == session else { return }
             stop()
             errorMessage = Self.describe(error)
         }
     }
 
     func stop() {
+        generation += 1
+        isStarting = false
         listener?.cancel()
         listener = nil
         for connection in pendingConnections.values { connection.cancel() }
@@ -122,17 +133,21 @@ final class LiveBroadcaster: NSObject, ObservableObject {
 
     // MARK: - Server
 
-    private func startServer() throws {
+    private func startServer(session: Int) throws {
         let parameters = NWParameters.tcp
         parameters.allowLocalEndpointReuse = true
         let listener = try NWListener(using: parameters, on: NWEndpoint.Port(rawValue: port)!)
 
         listener.newConnectionHandler = { [weak self] connection in
-            Task { @MainActor in self?.accept(connection) }
+            Task { @MainActor in
+                guard let self, self.generation == session else { connection.cancel(); return }
+                self.accept(connection)
+            }
         }
         listener.stateUpdateHandler = { [weak self] state in
             guard case .failed(let error) = state else { return }
             Task { @MainActor in
+                guard self?.generation == session else { return }
                 self?.errorMessage = "监听端口 \(self?.port ?? 0) 失败：\(error.localizedDescription)"
                 self?.stop()
             }
@@ -302,8 +317,9 @@ final class LiveBroadcaster: NSObject, ObservableObject {
 
     // MARK: - Capture
 
-    private func startCapture(excluding ownWindow: NSWindow?) async throws {
+    private func startCapture(excluding ownWindow: NSWindow?, session: Int) async throws {
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+        guard generation == session else { throw CancellationError() }
         guard let display = content.displays.first else { throw ScreenRecorder.RecorderError.noDisplay }
 
         let excluded = ownWindow.map { window in
@@ -329,14 +345,21 @@ final class LiveBroadcaster: NSObject, ObservableObject {
         // Encoding happens on `sampleQueue`, not the main actor. Only the
         // finished JPEG crosses over. See `FrameEncoder`.
         let encoder = FrameEncoder(frameRate: frameRate, quality: quality) { [weak self] jpeg, sequence in
-            Task { @MainActor in self?.publish(jpeg, sequence: sequence) }
+            Task { @MainActor in
+                guard self?.generation == session else { return }
+                self?.publish(jpeg, sequence: sequence)
+            }
         }
         self.encoder = encoder
         encoder.setHasViewers(!clients.isEmpty)
 
         try stream.addStreamOutput(encoder, type: .screen, sampleHandlerQueue: sampleQueue)
-        try await stream.startCapture()
         self.stream = stream
+        try await stream.startCapture()
+        guard generation == session else {
+            try? await stream.stopCapture()
+            throw CancellationError()
+        }
     }
 
     /// Takes a finished frame from the encoder and fans it out.
@@ -388,7 +411,7 @@ final class LiveBroadcaster: NSObject, ObservableObject {
         """
         <!DOCTYPE html><html lang="zh"><head><meta charset="utf-8">
         <meta name="viewport" content="width=device-width,initial-scale=1">
-        <title>MacVital 屏幕直播</title>
+        <title>PureMark 屏幕直播</title>
         <style>
           html,body{margin:0;height:100%;background:#111;display:flex;
             align-items:center;justify-content:center;font-family:-apple-system,system-ui,sans-serif}
@@ -480,6 +503,7 @@ private final class FrameEncoder: NSObject, SCStreamOutput, @unchecked Sendable 
 extension LiveBroadcaster: SCStreamDelegate {
     nonisolated func stream(_ stream: SCStream, didStopWithError error: Error) {
         Task { @MainActor in
+            guard self.stream === stream else { return }
             self.errorMessage = Self.describe(error)
             self.stop()
         }

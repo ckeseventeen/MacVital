@@ -12,7 +12,7 @@ struct MacVitalApp: App {
     @StateObject private var environment = AppEnvironment()
 
     var body: some Scene {
-        Window("MacVital", id: Self.mainWindowID) {
+        Window("PureMark", id: Self.mainWindowID) {
             RootView()
                 .environmentObject(environment)
                 .environmentObject(environment.scanModel)

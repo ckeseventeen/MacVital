@@ -2,7 +2,7 @@ import SwiftUI
 import AppKit
 
 struct WhiteboardPage: View {
-    @StateObject private var model = WhiteboardViewModel()
+    @ObservedObject var model: WhiteboardViewModel
 
     var body: some View {
         VStack(spacing: 0) {
