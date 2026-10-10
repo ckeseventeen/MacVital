@@ -62,16 +62,6 @@ extension View {
             in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
         )
     }
-
-    /// A bar pinned to the edge of a page — the selection summary and primary
-    /// action under a list.
-    ///
-    /// The system bar material, the same one toolbars and status bars use, so
-    /// it sits in the same family as the window chrome above it rather than
-    /// being a one-off.
-    func glassChrome() -> some View {
-        background(.bar)
-    }
 }
 
 /// A card. Same name and shape as before so every call site picked up the new
@@ -86,17 +76,5 @@ struct Card<Content: View>: View {
         content
             .padding(padding)
             .glassPanel(cornerRadius: cornerRadius, tinted: tint)
-    }
-}
-
-/// Groups adjacent glass elements so the system can merge them into one
-/// surface. Only meaningful around `floatingGlass`; content cards are not glass
-/// any more, so around those it is a plain pass-through.
-struct GlassGroup<Content: View>: View {
-    var spacing: CGFloat = 12
-    @ViewBuilder var content: Content
-
-    var body: some View {
-        content
     }
 }

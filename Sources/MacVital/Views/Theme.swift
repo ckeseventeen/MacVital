@@ -64,32 +64,15 @@ enum Theme {
         static let control: CGFloat = 9
     }
 
-    /// Type scale. The spec's numbers were drawn for a 660pt mock; at real
-    /// window size they read small, so the whole ramp moved up one step.
-    /// Sizes live here rather than as literals at call sites — a scale you can
-    /// shift in one place is the only kind that stays consistent.
-    enum Text {
-        /// Page titles.
-        static let title: CGFloat = 23
-        /// Big numbers: storage ring, reclaimable total.
-        static let display: CGFloat = 26
-        /// Section headings, card titles, list primary text.
-        static let heading: CGFloat = 16
-        /// Body and most controls.
-        static let body: CGFloat = 14
-        /// Secondary lines under a title.
-        static let caption: CGFloat = 13
-        /// Badges, chips, path monospace.
-        static let footnote: CGFloat = 12
-        /// The smallest thing that should ever ship — labels on stat tiles.
-        static let micro: CGFloat = 11
-    }
+    // Type is not a token here any more. Text uses the system's semantic
+    // styles — `.body`, `.callout`, `.headline` — which track the user's
+    // text size and the platform's own ramp, instead of a hand-shifted copy
+    // of it.
 
     /// Spacing scale. Everything got a step wider than the first pass: the
     /// complaint was that the UI felt cramped, and the fix for cramped is
     /// whitespace, not smaller type.
     enum Metric {
-        static let sidebarWidth: CGFloat = 224
         static let pagePaddingH: CGFloat = 36
         static let pagePaddingV: CGFloat = 32
         /// Between major blocks on a page.
@@ -97,8 +80,6 @@ enum Theme {
         /// Between cards in a grid.
         static let gridSpacing: CGFloat = 14
         static let cardPadding: CGFloat = 20
-        /// Footers and headers that sit against a divider.
-        static let barPaddingV: CGFloat = 16
     }
 
 }
@@ -173,13 +154,13 @@ struct SectionTitle: View {
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: systemImage)
-                .font(.system(size: 12, weight: .semibold))
+                .font(.callout.weight(.semibold))
                 .foregroundStyle(tint)
                 .frame(width: 22, height: 22)
                 .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                .accessibilityHidden(true)
             Text(title)
-                .font(.system(size: Theme.Text.body, weight: .medium))
-                .foregroundStyle(Theme.label)
+                .font(.headline)
         }
     }
 }

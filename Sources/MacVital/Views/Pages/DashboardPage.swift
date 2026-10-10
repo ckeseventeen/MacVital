@@ -24,11 +24,9 @@ struct DashboardPage: View {
     private var greeting: some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(Self.timeOfDayGreeting())
-                .font(.system(size: 24, weight: .medium))
-                .foregroundStyle(Theme.label)
+                .font(.title.weight(.semibold))
             Text(statusLine)
-                .font(.system(size: 14))
-                .foregroundStyle(Theme.secondaryLabel)
+                .foregroundStyle(.secondary)
         }
     }
 
@@ -72,18 +70,22 @@ struct DashboardPage: View {
             VStack(spacing: 2) {
                 if let disk = environment.diskSpace {
                     Text(ByteFormat.compact(disk.used))
-                        .font(.system(size: 26, weight: .medium))
+                        .font(.title.weight(.medium))
                         .monospacedDigit()
-                        .foregroundStyle(Theme.label)
                     Text("已用 / \(ByteFormat.compact(disk.total))")
-                        .font(.system(size: 11))
-                        .foregroundStyle(Theme.tertiaryLabel)
+                        .font(.subheadline)
+                        .foregroundStyle(.tertiary)
                 } else {
                     ProgressView().controlSize(.small)
                 }
             }
         }
         .frame(width: 122, height: 122)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("存储空间")
+        .accessibilityValue(environment.diskSpace.map {
+            "已用 \(ByteFormat.string($0.used))，共 \(ByteFormat.string($0.total))"
+        } ?? "正在读取")
     }
 
     private var statGrid: some View {
@@ -146,11 +148,6 @@ struct DashboardPage: View {
 
             // Three columns, not two. There are five actions, and two columns
             // left the last one alone on its own row with a hole beside it.
-            //
-            // Wrapped so the system merges adjacent glass into one surface
-            // rather than compositing five overlapping sheets — the whole
-            // reason `GlassEffectContainer` exists. No-op below macOS 26.
-            GlassGroup(spacing: Theme.Metric.gridSpacing) {
             LazyVGrid(
                 columns: Array(
                     repeating: GridItem(.flexible(), spacing: Theme.Metric.gridSpacing),
@@ -206,7 +203,6 @@ struct DashboardPage: View {
                 ) {
                     environment.showQuarantine = true
                 }
-            }
             }
         }
     }
@@ -293,6 +289,14 @@ private struct StatusTile: View {
             }
         }
 
+        var accessibilityLabel: String {
+            switch self {
+            case .good: return "正常"
+            case .attention: return "需要处理"
+            case .unavailable: return "不可用"
+            }
+        }
+
         var symbol: String {
             switch self {
             case .good: return "checkmark.circle.fill"
@@ -311,19 +315,19 @@ private struct StatusTile: View {
         VStack(alignment: .leading, spacing: 7) {
             HStack(spacing: 7) {
                 Image(systemName: systemImage)
-                    .font(.system(size: 13))
-                    .foregroundStyle(Theme.secondaryLabel)
+                    .foregroundStyle(.secondary)
+                    .accessibilityHidden(true)
                 Text(title)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(Theme.label)
+                    .font(.body.weight(.medium))
                 Spacer(minLength: 0)
                 Image(systemName: state.symbol)
-                    .font(.system(size: 12))
+                    .font(.callout)
                     .foregroundStyle(state.tint)
+                    .accessibilityLabel(state.accessibilityLabel)
             }
             Text(detail)
-                .font(.system(size: 12))
-                .foregroundStyle(Theme.secondaryLabel)
+                .font(.callout)
+                .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -359,17 +363,19 @@ private struct StatTile: View {
                 RoundedRectangle(cornerRadius: 2, style: .continuous)
                     .fill(dot)
                     .frame(width: 7, height: 7)
+                    .accessibilityHidden(true)
                 Text(label)
-                    .font(.system(size: 11))
-                    .foregroundStyle(Theme.secondaryLabel)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
             }
             Text(value)
-                .font(.system(size: 19, weight: .medium))
+                .font(.title2.weight(.medium))
                 .monospacedDigit()
                 .foregroundStyle(valueTint)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
         }
+        .accessibilityElement(children: .combine)
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 16)
         .padding(.vertical, 14)
@@ -392,13 +398,13 @@ private struct QuickAction: View {
         Button(action: action) {
             HStack(spacing: 11) {
                 GlyphTile(systemImage: systemImage, tint: tint, size: 34)
+                    .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(title)
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundStyle(Theme.label)
+                        .font(.body.weight(.semibold))
                     Text(subtitle)
-                        .font(.system(size: 11))
-                        .foregroundStyle(Theme.secondaryLabel)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
                 Spacer(minLength: 0)

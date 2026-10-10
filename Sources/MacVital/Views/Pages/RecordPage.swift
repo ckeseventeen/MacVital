@@ -18,7 +18,6 @@ struct RecordPage: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: Theme.Metric.sectionSpacing) {
-                PageHeader(title: "录屏与直播", subtitle: subtitle, systemImage: "record.circle")
                 recordCard
                 if let latest = recorder.latest { resultCard(latest) }
                 liveCard
@@ -26,6 +25,7 @@ struct RecordPage: View {
             .padding(.horizontal, Theme.Metric.pagePaddingH)
             .padding(.vertical, Theme.Metric.pagePaddingV)
         }
+        .navigationSubtitle(subtitle)
         .onReceive(ticker) { _ in
             if case .recording(let since) = recorder.state {
                 elapsed = Date().timeIntervalSince(since)
@@ -63,12 +63,12 @@ struct RecordPage: View {
                     )
                     VStack(alignment: .leading, spacing: 3) {
                         Text(recorder.state.isRecording ? "正在录制" : "录制屏幕")
-                            .font(.system(size: 16, weight: .medium))
+                            .font(.title3.weight(.semibold))
                             .foregroundStyle(Theme.label)
                         Text(recorder.state.isRecording
                              ? "已录 \(Self.clock(elapsed)) · PureMark 自己的窗口不会出现在画面里"
                              : "全屏录制为 H.264 MP4，本窗口会自动从画面中排除。")
-                            .font(.system(size: 13))
+                            .font(.body)
                             .foregroundStyle(Theme.secondaryLabel)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -94,7 +94,7 @@ struct RecordPage: View {
                     HStack(spacing: 22) {
                         HStack(spacing: 10) {
                             Text("帧率")
-                                .font(.system(size: 13))
+                                .font(.body)
                                 .foregroundStyle(Theme.secondaryLabel)
                             Picker("", selection: Bindable(recorder).frameRate) {
                                 Text("30 fps").tag(30)
@@ -107,7 +107,7 @@ struct RecordPage: View {
                         Toggle("包含鼠标指针", isOn: Bindable(recorder).showsCursor)
                             .toggleStyle(.switch)
                             .controlSize(.small)
-                            .font(.system(size: 13))
+                            .font(.body)
                         Spacer(minLength: 0)
                     }
                 }
@@ -121,14 +121,14 @@ struct RecordPage: View {
                 GlyphTile(systemImage: "film", tint: Theme.success, size: 40)
                 VStack(alignment: .leading, spacing: 3) {
                     Text("录制完成 · \(Self.clock(latest.duration))")
-                        .font(.system(size: 15, weight: .medium))
+                        .font(.title3.weight(.medium))
                         .foregroundStyle(Theme.label)
                     Text("\(Int(latest.size.width)) × \(Int(latest.size.height)) · \(ByteFormat.string(latest.bytes))")
-                        .font(.system(size: 12))
+                        .font(.callout)
                         .foregroundStyle(Theme.secondaryLabel)
                     if let savedTo {
                         Label("已保存到「影片」/\(savedTo.lastPathComponent)", systemImage: "checkmark.circle.fill")
-                            .font(.system(size: 12))
+                            .font(.callout)
                             .foregroundStyle(Theme.success)
                     }
                 }
@@ -155,12 +155,12 @@ struct RecordPage: View {
                     )
                     VStack(alignment: .leading, spacing: 3) {
                         Text(live.isBroadcasting ? "正在直播" : "局域网直播")
-                            .font(.system(size: 16, weight: .medium))
+                            .font(.title3.weight(.semibold))
                             .foregroundStyle(Theme.label)
                         Text(live.isBroadcasting
                              ? "\(live.viewerCount) 位观众正在观看"
                              : "同一网络下的任何设备用浏览器打开链接即可观看，不需要装任何东西。")
-                            .font(.system(size: 13))
+                            .font(.body)
                             .foregroundStyle(Theme.secondaryLabel)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -177,7 +177,7 @@ struct RecordPage: View {
                 if live.isBroadcasting {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("在其他设备的浏览器里打开")
-                            .font(.system(size: 12))
+                            .font(.callout)
                             .foregroundStyle(Theme.secondaryLabel)
                         ForEach(live.addresses, id: \.self) { address in
                             HStack(spacing: 10) {
@@ -201,7 +201,7 @@ struct RecordPage: View {
                         }
                         if live.addresses.isEmpty {
                             Text("没有检测到局域网地址，可能未连接网络。")
-                                .font(.system(size: 12))
+                                .font(.callout)
                                 .foregroundStyle(Theme.junk)
                         }
                     }
@@ -212,7 +212,7 @@ struct RecordPage: View {
                     HStack(spacing: 22) {
                         HStack(spacing: 10) {
                             Text("帧率")
-                                .font(.system(size: 13))
+                                .font(.body)
                                 .foregroundStyle(Theme.secondaryLabel)
                             Picker("", selection: Bindable(live).frameRate) {
                                 Text("8").tag(8)
@@ -225,7 +225,7 @@ struct RecordPage: View {
                         }
                         HStack(spacing: 10) {
                             Text("画质")
-                                .font(.system(size: 13))
+                                .font(.body)
                                 .foregroundStyle(Theme.secondaryLabel)
                             Slider(value: Bindable(live).quality, in: 0.3...0.9)
                                 .frame(width: 130)
@@ -238,7 +238,7 @@ struct RecordPage: View {
                     "这是局域网直播（MJPEG over HTTP），不是推流到 Twitch / YouTube / B 站——那需要 RTMP，macOS 没有对应框架。首次开启时系统防火墙可能会询问是否允许接入连接。",
                     systemImage: "info.circle"
                 )
-                .font(.system(size: 12))
+                .font(.callout)
                 .foregroundStyle(Theme.tertiaryLabel)
                 .fixedSize(horizontal: false, vertical: true)
             }

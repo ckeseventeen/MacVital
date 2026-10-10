@@ -34,7 +34,7 @@ enum AnnotationTool: String, CaseIterable, Identifiable {
         case .rectangle: return "rectangle"
         case .ellipse: return "circle"
         case .arrow: return "arrow.up.right"
-        case .text: return "textformat"
+        case .text: return "character.cursor.ibeam"
         case .eraser: return "eraser"
         }
     }

@@ -15,11 +15,6 @@ struct AnnotatePage: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: Theme.Metric.sectionSpacing) {
-                PageHeader(
-                    title: "屏幕画笔",
-                    subtitle: pen.isActive ? "正在绘制 · 按 esc 退出" : "在任何窗口上方直接标注",
-                    systemImage: "pencil.and.outline"
-                )
                 toggleCard
                 toolsCard
                 focusCard
@@ -28,6 +23,7 @@ struct AnnotatePage: View {
             .padding(.horizontal, Theme.Metric.pagePaddingH)
             .padding(.vertical, Theme.Metric.pagePaddingV)
         }
+        .navigationSubtitle(pen.isActive ? "正在绘制 · 按 esc 退出" : "在任何窗口上方直接标注")
     }
 
     // MARK: - Toggle
@@ -42,12 +38,12 @@ struct AnnotatePage: View {
                 )
                 VStack(alignment: .leading, spacing: 3) {
                     Text(pen.isActive ? "画笔已开启" : "开启屏幕画笔")
-                        .font(.system(size: 16, weight: .medium))
+                        .font(.title3.weight(.semibold))
                         .foregroundStyle(Theme.label)
                     Text(pen.isActive
                          ? "覆盖全部显示器。画完的每一笔都可以再选中、移动、擦掉。"
                          : "覆盖全部显示器，鼠标拖动即可绘制。退出后笔迹立即清除。")
-                        .font(.system(size: 13))
+                        .font(.body)
                         .foregroundStyle(Theme.secondaryLabel)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -65,7 +61,7 @@ struct AnnotatePage: View {
         Card {
             VStack(alignment: .leading, spacing: 18) {
                 Text("工具")
-                    .font(.system(size: 14, weight: .medium))
+                    .font(.body.weight(.medium))
                     .foregroundStyle(Theme.label)
 
                 LazyVGrid(
@@ -118,10 +114,10 @@ struct AnnotatePage: View {
             VStack(alignment: .leading, spacing: 14) {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("聚光灯与遮罩")
-                        .font(.system(size: 14, weight: .medium))
+                        .font(.body.weight(.medium))
                         .foregroundStyle(Theme.label)
                     Text("把屏幕其余部分压暗，只留下你要讲的那一块。压暗层在画笔之下，亮区里照样能画。")
-                        .font(.system(size: 12))
+                        .font(.callout)
                         .foregroundStyle(Theme.secondaryLabel)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -136,7 +132,7 @@ struct AnnotatePage: View {
 
                 if pen.focusMode == .mask {
                     Label("遮罩模式下，切到「选择」工具再拖动即可改变亮区范围。", systemImage: "info.circle")
-                        .font(.system(size: 12))
+                        .font(.callout)
                         .foregroundStyle(Theme.tertiaryLabel)
                 }
             }
@@ -149,7 +145,7 @@ struct AnnotatePage: View {
         Card {
             VStack(alignment: .leading, spacing: 10) {
                 Text("快捷键")
-                    .font(.system(size: 14, weight: .medium))
+                    .font(.body.weight(.medium))
                     .foregroundStyle(Theme.label)
                 ForEach(shortcuts, id: \.key) { shortcut in
                     HStack(spacing: 14) {
@@ -161,14 +157,14 @@ struct AnnotatePage: View {
                             .foregroundStyle(Theme.label)
                             .frame(width: 74, alignment: .leading)
                         Text(shortcut.action)
-                            .font(.system(size: 13))
+                            .font(.body)
                             .foregroundStyle(Theme.secondaryLabel)
                         Spacer(minLength: 0)
                     }
                 }
                 Divider().overlay(Theme.separator).padding(.vertical, 3)
                 Text("菜单栏右上角的笔尖图标可以随时开关，不必回到这个窗口。")
-                    .font(.system(size: 12))
+                    .font(.callout)
                     .foregroundStyle(Theme.tertiaryLabel)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -192,7 +188,7 @@ struct AnnotatePage: View {
     ) -> some View {
         HStack(spacing: 12) {
             Text(label)
-                .font(.system(size: 13))
+                .font(.body)
                 .foregroundStyle(Theme.secondaryLabel)
                 .frame(width: 34, alignment: .leading)
             content()
@@ -212,9 +208,9 @@ private struct ToolChip: View {
         Button(action: action) {
             VStack(spacing: 5) {
                 Image(systemName: tool.symbolName)
-                    .font(.system(size: 16))
+                    .font(.title3)
                 Text(tool.title)
-                    .font(.system(size: 12))
+                    .font(.callout)
             }
             .foregroundStyle(isOn ? Color.white : Theme.label)
             .frame(maxWidth: .infinity)
@@ -238,12 +234,12 @@ private struct FocusChip: View {
         Button(action: action) {
             HStack(spacing: 8) {
                 Image(systemName: mode.symbolName)
-                    .font(.system(size: 14))
+                    .font(.body)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(mode.title)
-                        .font(.system(size: 13, weight: .medium))
+                        .font(.body.weight(.medium))
                     Text(mode.detail)
-                        .font(.system(size: 11))
+                        .font(.subheadline)
                         .opacity(0.8)
                 }
             }

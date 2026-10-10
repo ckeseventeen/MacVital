@@ -6,21 +6,7 @@ struct WhiteboardPage: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: 16) {
-                PageHeader(
-                    title: "白板",
-                    subtitle: "\(model.boards.count) 块白板 · 可导入图片、导出 PNG 或 PDF",
-                    systemImage: "rectangle.on.rectangle"
-                ) {
-                    Menu("导出") {
-                        ForEach(WhiteboardViewModel.ExportFormat.allCases) { format in
-                            Button(format.title) { model.export(as: format) }
-                        }
-                    }
-                    .menuStyle(.borderlessButton)
-                    .fixedSize()
-                }
-
+            VStack(alignment: .leading, spacing: 14) {
                 AnnotationToolbar(
                     tool: $model.tool,
                     colorIndex: $model.colorIndex,
@@ -33,9 +19,8 @@ struct WhiteboardPage: View {
 
                 boardStrip
             }
-            .padding(.horizontal, Theme.Metric.pagePaddingH)
-            .padding(.top, Theme.Metric.pagePaddingV)
-            .padding(.bottom, 16)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 14)
 
             WhiteboardCanvas(model: model)
                 .background(Color.white)
@@ -44,9 +29,22 @@ struct WhiteboardPage: View {
                     RoundedRectangle(cornerRadius: Theme.Radius.tile, style: .continuous)
                         .strokeBorder(Theme.separator, lineWidth: 1)
                 )
-                .padding(.horizontal, Theme.Metric.pagePaddingH)
-                .padding(.bottom, Theme.Metric.pagePaddingV)
+                .padding(.horizontal, 20)
+                .padding(.bottom, 20)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .navigationSubtitle("\(model.boards.count) 块白板 · 可导入图片、导出 PNG 或 PDF")
+        .toolbar {
+            ToolbarItem {
+                Menu {
+                    ForEach(WhiteboardViewModel.ExportFormat.allCases) { format in
+                        Button(format.title) { model.export(as: format) }
+                    }
+                } label: {
+                    Label("导出", systemImage: "square.and.arrow.up")
+                }
+                .help("把当前白板导出为图片或 PDF")
+            }
         }
         .alert(
             "白板出错",
@@ -70,7 +68,7 @@ struct WhiteboardPage: View {
                             HStack(spacing: 6) {
                                 if board.image != nil {
                                     Image(systemName: "photo")
-                                        .font(.system(size: 11))
+                                        .font(.subheadline)
                                 }
                                 Text(board.name)
                                     .font(.system(size: 13, weight: index == model.currentIndex ? .medium : .regular))

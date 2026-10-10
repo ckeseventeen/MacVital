@@ -29,6 +29,29 @@ struct ScreenshotPage: View {
                 capturePrompt
             }
         }
+        .navigationSubtitle(subtitle)
+        .toolbar {
+            if shots.latest != nil {
+                ToolbarItem {
+                    Menu {
+                        ForEach(ScreenshotService.Mode.allCases) { candidate in
+                            Button {
+                                mode = candidate
+                                Task { await capture() }
+                            } label: {
+                                Label(candidate.title, systemImage: candidate.symbolName)
+                            }
+                        }
+                    } label: {
+                        Label("重新截图", systemImage: "camera.viewfinder")
+                    } primaryAction: {
+                        Task { await capture() }
+                    }
+                    .help("用同样的方式再截一张，或从菜单里换一种")
+                    .disabled(shots.isCapturing)
+                }
+            }
+        }
         .alert(
             shots.errorNeedsScreenRecording ? "缺少「屏幕录制」权限" : "截图出错",
             isPresented: Binding(
@@ -48,42 +71,42 @@ struct ScreenshotPage: View {
         }
     }
 
+    private var subtitle: String {
+        if shots.isCapturing { return "等待捕获…" }
+        if let latest = shots.latest {
+            return "\(Int(latest.size.width)) × \(Int(latest.size.height)) · \(RelativeDateFormat.string(latest.takenAt))"
+        }
+        return "截完可以直接在图上标注，再决定保存还是丢弃"
+    }
+
     // MARK: - Before a capture
 
     private var capturePrompt: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: Theme.Metric.sectionSpacing) {
-                PageHeader(
-                    title: "截图",
-                    subtitle: shots.isCapturing ? "等待捕获…" : "截完可以直接在图上标注，再决定保存还是丢弃",
-                    systemImage: "camera.viewfinder"
-                )
-
-                GlassGroup(spacing: Theme.Metric.gridSpacing) {
-                    HStack(spacing: Theme.Metric.gridSpacing) {
-                        ForEach(ScreenshotService.Mode.allCases) { candidate in
-                            ModeCard(
-                                mode: candidate,
-                                isBusy: shots.isCapturing && mode == candidate
-                            ) {
-                                mode = candidate
-                                Task { await capture() }
-                            }
+                HStack(spacing: Theme.Metric.gridSpacing) {
+                    ForEach(ScreenshotService.Mode.allCases) { candidate in
+                        ModeCard(
+                            mode: candidate,
+                            isBusy: shots.isCapturing && mode == candidate
+                        ) {
+                            mode = candidate
+                            Task { await capture() }
                         }
                     }
                 }
 
                 Card(padding: 40) {
-                    VStack(spacing: 16) {
-                        GlyphTile(systemImage: "camera.viewfinder", tint: Theme.accent, size: 56)
+                    VStack(spacing: 14) {
+                        Image(systemName: "camera.viewfinder")
+                            .font(.system(size: 40, weight: .light))
+                            .foregroundStyle(.secondary)
+                            .accessibilityHidden(true)
                         Text("还没有截图")
-                            .font(.system(size: 16, weight: .medium))
-                            .foregroundStyle(Theme.label)
+                            .font(.title3.weight(.semibold))
                         Text("开始截图后会暂时隐藏 PureMark，显示刚才位于后面的应用。选区和窗口模式按 esc 可取消。")
-                            .font(.system(size: 13))
-                            .foregroundStyle(Theme.secondaryLabel)
+                            .foregroundStyle(.secondary)
                             .multilineTextAlignment(.center)
-                            .fixedSize(horizontal: false, vertical: true)
                             .frame(maxWidth: 400)
                         delayPicker.padding(.top, 8)
                     }
@@ -98,8 +121,7 @@ struct ScreenshotPage: View {
     private var delayPicker: some View {
         HStack(spacing: 12) {
             Text("延时")
-                .font(.system(size: 13))
-                .foregroundStyle(Theme.secondaryLabel)
+                .foregroundStyle(.secondary)
             Picker("", selection: Bindable(shots).delaySeconds) {
                 Text("无").tag(0)
                 Text("3 秒").tag(3)
@@ -116,30 +138,17 @@ struct ScreenshotPage: View {
 
     private func editor(for latest: ScreenshotService.Capture) -> some View {
         VStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: 16) {
-                PageHeader(
-                    title: "截图",
-                    subtitle: "\(Int(latest.size.width)) × \(Int(latest.size.height)) · \(RelativeDateFormat.string(latest.takenAt))",
-                    systemImage: "camera.viewfinder"
-                ) {
-                    Button("重新截图") { Task { await capture() } }
-                        .buttonStyle(.bordered)
-                        .disabled(shots.isCapturing)
-                }
-
-                AnnotationToolbar(
-                    tool: $tool,
-                    colorIndex: $colorIndex,
-                    widthIndex: $widthIndex,
-                    canUndo: canvasRef.canUndo,
-                    onUndo: { canvasRef.canvas?.undo() },
-                    onRedo: { canvasRef.canvas?.redo() },
-                    onClear: { canvasRef.canvas?.clear() }
-                )
-            }
-            .padding(.horizontal, Theme.Metric.pagePaddingH)
-            .padding(.top, Theme.Metric.pagePaddingV)
-            .padding(.bottom, 16)
+            AnnotationToolbar(
+                tool: $tool,
+                colorIndex: $colorIndex,
+                widthIndex: $widthIndex,
+                canUndo: canvasRef.canUndo,
+                onUndo: { canvasRef.canvas?.undo() },
+                onRedo: { canvasRef.canvas?.redo() },
+                onClear: { canvasRef.canvas?.clear() }
+            )
+            .padding(.horizontal, 20)
+            .padding(.vertical, 14)
 
             // The canvas keeps the image's aspect ratio so annotations land
             // where the user aimed; `flattened()` scales them back onto the
@@ -153,10 +162,9 @@ struct ScreenshotPage: View {
             )
             .aspectRatio(latest.size.width / max(latest.size.height, 1), contentMode: .fit)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .padding(.horizontal, Theme.Metric.pagePaddingH)
+            .padding(.horizontal, 20)
             .padding(.bottom, 16)
 
-            Divider().overlay(Theme.separator)
             footer
         }
     }
@@ -167,12 +175,11 @@ struct ScreenshotPage: View {
         HStack(spacing: 12) {
             if let savedTo {
                 Label("已保存到 \(savedTo.lastPathComponent)", systemImage: "checkmark.circle.fill")
-                    .font(.system(size: 13))
                     .foregroundStyle(Theme.success)
             } else {
                 Text("标注会随图片一起保存；丢弃后不留文件")
-                    .font(.system(size: 13))
-                    .foregroundStyle(Theme.secondaryLabel)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
             }
 
             Spacer()
@@ -186,20 +193,17 @@ struct ScreenshotPage: View {
             Button("拷贝") { copyFlattened() }
                 .keyboardShortcut("c", modifiers: [.command, .shift])
 
-            Button {
+            Button("保存到桌面") {
                 savedTo = saveFlattened()
-            } label: {
-                Text("保存到桌面")
-                    .font(.system(size: 14, weight: .medium))
-                    .padding(.horizontal, 6)
             }
             .buttonStyle(.borderedProminent)
-            .controlSize(.large)
             .keyboardShortcut("s", modifiers: .command)
         }
-        .padding(.horizontal, Theme.Metric.pagePaddingH)
-        .padding(.vertical, Theme.Metric.barPaddingV)
-        .glassChrome()
+        .controlSize(.large)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(.bar)
+        .overlay(alignment: .top) { Divider() }
     }
 
     // MARK: - Actions
@@ -244,16 +248,16 @@ private struct ModeCard: View {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
                     GlyphTile(systemImage: mode.symbolName, tint: Theme.accent, size: 38)
+                        .accessibilityHidden(true)
                     Spacer(minLength: 0)
                     if isBusy { ProgressView().controlSize(.small) }
                 }
                 VStack(alignment: .leading, spacing: 3) {
                     Text(mode.title)
-                        .font(.system(size: 16, weight: .medium))
-                        .foregroundStyle(Theme.label)
+                        .font(.title3.weight(.semibold))
                     Text(mode.detail)
-                        .font(.system(size: 12))
-                        .foregroundStyle(Theme.secondaryLabel)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
             }
