@@ -22,28 +22,20 @@ struct UninstallPage: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: 18) {
-                PageHeader(
-                    title: "卸载应用",
-                    subtitle: "\(model.apps.count) 个应用 · 选中后一并清除它散落各处的配置",
-                    systemImage: "app.badge.checkmark"
-                )
-                searchField
-            }
-            .padding(.horizontal, Theme.Metric.pagePaddingH)
-            .padding(.top, Theme.Metric.pagePaddingV)
-            .padding(.bottom, 18)
-
-            Divider().overlay(Theme.separator)
-
             HSplitView {
-                appList.frame(minWidth: 250, idealWidth: 290, maxWidth: 360)
-                planPane.frame(minWidth: 380)
+                appList
+                    .frame(minWidth: 220, idealWidth: 260, maxWidth: 340)
+                // Explicit ideal widths on both panes: left to themselves, a
+                // list of long paths reports its one-line width as its ideal,
+                // and split views size their panes from ideals.
+                planPane
+                    .frame(minWidth: 360, idealWidth: 480, maxWidth: .infinity, maxHeight: .infinity)
             }
-
-            Divider().overlay(Theme.separator)
             footer
         }
+        .navigationSubtitle(model.apps.isEmpty ? "" : "\(model.apps.count) 个应用")
+        .searchable(text: $model.query, placement: .toolbar, prompt: "搜索应用")
+        .toolbar { toolbar }
         .task { model.loadApps() }
         // Quitting the app being uninstalled happens *outside* this window, so
         // coming back to it is the moment to re-check. Without this the plan
@@ -67,7 +59,7 @@ struct UninstallPage: View {
             // When the target app is up, quitting is a precondition rather than
             // a separate errand — so it becomes the primary action instead of a
             // hint in the footer the user has to notice first.
-            if model.runningInstance != nil {
+            if !model.blockingTargets.isEmpty {
                 Button("退出并卸载", role: .destructive) { Task { await model.quitAndUninstall() } }
                 Button("仅卸载未占用的项目") { Task { await model.uninstall() } }
             } else {
@@ -75,8 +67,8 @@ struct UninstallPage: View {
             }
             Button("取消", role: .cancel) {}
         } message: {
-            if let running = model.runningInstance {
-                Text("「\(running.localizedName ?? model.selectedApp?.name ?? "该 App")」正在运行。"
+            if !model.blockingTargets.isEmpty {
+                Text("「\(blockerNames)」正在运行。"
                      + "边运行边删会留下残留 —— 它退出时会把偏好设置和容器重新写回去。\n\n"
                      + "将先请它退出（有未保存内容时它会向你确认），退出后再移动 \(model.selection.count) 项，"
                      + "共 \(ByteFormat.string(model.selectedBytes))。文件先进入隔离区，随时可以还原。")
@@ -118,20 +110,31 @@ struct UninstallPage: View {
         return text
     }
 
-    private var searchField: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 13))
-                .foregroundStyle(Theme.secondaryLabel)
-            TextField("搜索应用", text: $model.query)
-                .textFieldStyle(.plain)
-                .font(.system(size: 13))
+    // MARK: - Toolbar
+
+    @ToolbarContentBuilder
+    private var toolbar: some ToolbarContent {
+        ToolbarItemGroup {
+            Button {
+                model.loadApps()
+                Task { await model.replan() }
+            } label: {
+                Label("重新载入", systemImage: "arrow.clockwise")
+            }
+            .help("重新读取已安装的应用")
+
+            Button {
+                guard let app = model.selectedApp else { return }
+                NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: app.path)])
+            } label: {
+                Label("在访达中显示", systemImage: "folder")
+            }
+            .help("在访达中显示这个应用")
+            .disabled(model.selectedApp == nil)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 7)
-        .background(Theme.well, in: RoundedRectangle(cornerRadius: Theme.Radius.tile, style: .continuous))
-        .frame(maxWidth: 340)
     }
+
+    // MARK: - App list
 
     private var appList: some View {
         List(model.visibleApps, id: \.bundleIdentifier, selection: Binding(
@@ -144,15 +147,14 @@ struct UninstallPage: View {
             HStack(spacing: 9) {
                 Image(nsImage: NSWorkspace.shared.icon(forFile: app.path))
                     .resizable()
-                    .frame(width: 26, height: 26)
+                    .frame(width: 24, height: 24)
+                    .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(app.name)
-                        .font(.system(size: 14))
-                        .foregroundStyle(Theme.label)
                         .lineLimit(1)
                     Text(app.bundleIdentifier)
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundStyle(Theme.tertiaryLabel)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
                         .lineLimit(1)
                         .truncationMode(.middle)
                 }
@@ -161,7 +163,16 @@ struct UninstallPage: View {
             .tag(app.bundleIdentifier)
         }
         .listStyle(.inset)
+        .overlay {
+            if model.apps.isEmpty {
+                ProgressView().controlSize(.small)
+            } else if model.visibleApps.isEmpty {
+                ContentUnavailableView.search(text: model.query)
+            }
+        }
     }
+
+    // MARK: - Plan
 
     @ViewBuilder
     private var planPane: some View {
@@ -170,28 +181,35 @@ struct UninstallPage: View {
                 HStack(spacing: 12) {
                     Image(nsImage: NSWorkspace.shared.icon(forFile: app.path))
                         .resizable()
-                        .frame(width: 38, height: 38)
+                        .frame(width: 36, height: 36)
+                        .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 1) {
                         Text(app.name)
-                            .font(.system(size: 16, weight: .medium))
-                            .foregroundStyle(Theme.label)
-                        Text("\(model.rows.count) 项 · 共 \(ByteFormat.string(model.totalBytes))")
-                            .font(.system(size: 12))
-                            .foregroundStyle(Theme.secondaryLabel)
+                            .font(.title3.weight(.semibold))
+                        Text(model.isPlanning
+                             ? "正在查找相关文件…"
+                             : "\(model.rows.count) 项 · 共 \(ByteFormat.string(model.totalBytes))")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
                     }
                     Spacer()
-                    Button("全选") { model.selectAll() }.buttonStyle(.link).font(.system(size: 13))
-                    Button("全不选") { model.deselectAll() }.buttonStyle(.link).font(.system(size: 13))
+                    if model.runningInstance != nil {
+                        Label("正在运行", systemImage: "circle.fill")
+                            .font(.callout)
+                            .foregroundStyle(.green)
+                            .labelStyle(RunningLabelStyle())
+                    }
                 }
-                .padding(.horizontal, 18)
+                .padding(.horizontal, 16)
                 .padding(.vertical, 12)
 
-                Divider().overlay(Theme.separator)
+                Divider()
 
-                if model.isPlanning {
-                    Spacer()
-                    ProgressView("正在查找相关文件…").controlSize(.small)
-                    Spacer()
+                if model.isPlanning && model.rows.isEmpty {
+                    ProgressView()
+                        .controlSize(.small)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     List {
                         ForEach(groupedRows, id: \.kind) { group in
@@ -207,14 +225,10 @@ struct UninstallPage: View {
                             } header: {
                                 HStack(spacing: 7) {
                                     Text(group.kind.title)
-                                        .font(.system(size: 13, weight: .medium))
-                                        .foregroundStyle(Theme.label)
                                     if group.kind.carriesUserData {
                                         Text("含个人数据，默认不勾选")
-                                            .font(.system(size: 11))
                                             .foregroundStyle(Theme.junk)
                                     }
-                                    Spacer()
                                 }
                                 .textCase(nil)
                             }
@@ -225,19 +239,11 @@ struct UninstallPage: View {
                 }
             }
         } else {
-            VStack(spacing: 10) {
-                GlyphTile(systemImage: "square.grid.2x2", tint: Color.indigo, size: 46)
-                Text("从左侧选择要卸载的应用")
-                    .font(.system(size: 14))
-                    .foregroundStyle(Theme.secondaryLabel)
+            ContentUnavailableView {
+                Label("选择要卸载的应用", systemImage: "app.badge.checkmark")
+            } description: {
                 Text("会一并列出它散落在系统各处的配置、容器、缓存和登录项。")
-                    .font(.system(size: 12))
-                    .foregroundStyle(Theme.tertiaryLabel)
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: 280)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 
@@ -251,76 +257,155 @@ struct UninstallPage: View {
         }
     }
 
-    private var footer: some View {
-        HStack(spacing: 12) {
-            if let summary = model.summary {
-                // The verification result, not just a receipt. A re-plan ran
-                // after the removal; either it came back with nothing — which
-                // is what makes "卸载干净" a checkable statement rather than a
-                // marketing one — or it names what is still there.
-                VStack(alignment: .leading, spacing: 2) {
-                    Label(summary, systemImage: "checkmark.circle")
-                        .font(.system(size: 12))
-                        .foregroundStyle(Theme.secondaryLabel)
-                        .lineLimit(2)
-                    if model.isVerifiedClean {
-                        Label("已复查：这个 App 的残留没有剩下任何一项", systemImage: "checkmark.seal.fill")
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(Theme.success)
-                    } else {
-                        Label("复查后仍有 \(model.leftovers.count) 项残留，列在上方", systemImage: "exclamationmark.triangle.fill")
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(Theme.junk)
-                    }
-                }
-            // "Still running" is the one lock the user can clear, so it gets an
-            // action instead of a count. Everything else here is permanent and
-            // there is nothing to offer.
-            } else if let running = model.runningInstance, !model.inUseRows.isEmpty {
-                Label("\(model.inUseRows.count) 项被占用：「\(running.localizedName ?? model.selectedApp?.name ?? "该 App")」正在运行",
-                      systemImage: "exclamationmark.triangle.fill")
-                    .font(.system(size: 12))
-                    .foregroundStyle(Theme.junk)
+    // MARK: - Footer
 
+    /// What happened, or what is in the way — above the action bar rather
+    /// than squeezed into it, because these are sentences and some of them
+    /// carry their own button.
+    @ViewBuilder
+    private var status: some View {
+        if let summary = model.summary {
+            // The verification result, not just a receipt. A re-plan ran
+            // after the removal; either it came back with nothing — which
+            // is what makes "卸载干净" a checkable statement rather than a
+            // marketing one — or it names what is still there.
+            VStack(alignment: .leading, spacing: 3) {
+                Label(summary, systemImage: "checkmark.circle")
+                    .foregroundStyle(.secondary)
+                if model.isVerifiedClean {
+                    Label("已复查：这个 App 的残留没有剩下任何一项", systemImage: "checkmark.seal.fill")
+                        .foregroundStyle(Theme.success)
+                } else {
+                    Label("复查后仍有 \(model.leftovers.count) 项残留，列在上方", systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(Theme.junk)
+                }
+                forceQuitButton
+            }
+        // "Still running" is the one lock the user can clear, so it gets an
+        // action instead of a count. Everything else here is permanent and
+        // there is nothing to offer.
+        //
+        // Whoever holds the files, not only the app itself: a Finder
+        // extension, an updater or a login-item agent keeps its bundle
+        // locked after the main app has quit, and this used to fall through
+        // to "locked by safety rules" with nothing to press.
+        } else if hasBlockers {
+            HStack(spacing: 10) {
+                Label("\(model.inUseRows.count) 项被占用：「\(blockerNames)」正在运行",
+                      systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(Theme.junk)
+                Spacer(minLength: 8)
                 Button(model.isPlanning ? "正在重新检测…" : "退出它并重试") {
                     Task { await model.quitRunningInstanceAndReplan() }
                 }
-                .controlSize(.small)
                 .disabled(model.isPlanning || model.isRemoving)
-            } else if !model.deniedRows.isEmpty {
-                Label("\(model.deniedRows.count) 项被安全规则锁定", systemImage: "lock.fill")
-                    .font(.system(size: 12))
-                    .foregroundStyle(Theme.tertiaryLabel)
-            } else if model.needsHelper {
-                Label("含系统目录项目，需要先安装特权助手", systemImage: "key.fill")
-                    .font(.system(size: 12))
-                    .foregroundStyle(Theme.junk)
+                forceQuitButton
             }
-
-            Spacer()
-
-            Text("已选 \(model.selection.count) 项 · \(ByteFormat.string(model.selectedBytes))")
-                .font(.system(size: 13))
-                .monospacedDigit()
-                .foregroundStyle(Theme.secondaryLabel)
-
-            Button {
-                confirming = true
-            } label: {
-                if model.isRemoving {
-                    ProgressView().controlSize(.small)
-                } else {
-                    Text("卸载").font(.system(size: 14, weight: .medium)).padding(.horizontal, 8)
-                }
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
-            .tint(Theme.junk)
-            .disabled(model.selection.isEmpty || model.isRemoving)
+        } else if !model.deniedRows.isEmpty {
+            Label("\(model.deniedRows.count) 项被安全规则锁定", systemImage: "lock.fill")
+                .foregroundStyle(.secondary)
+        } else if model.needsHelper {
+            Label("含系统目录项目，需要先安装特权助手", systemImage: "key.fill")
+                .foregroundStyle(Theme.junk)
         }
-        .padding(.horizontal, Theme.Metric.pagePaddingH)
-        .padding(.vertical, Theme.Metric.barPaddingV)
-        .glassChrome()
+    }
+
+    /// The way into the force-quit confirmation.
+    ///
+    /// The dialog and the view model's whole escalation path existed, and the
+    /// failure message even told the user to use 「强制结束」, but nothing on
+    /// screen opened it — a graceful quit that was refused was a dead end.
+    /// It appears only after that refusal, never before, and it opens the
+    /// confirmation that names what will be killed rather than acting itself.
+    @ViewBuilder
+    private var forceQuitButton: some View {
+        if model.quitWasRefused, !model.stubbornTargets.isEmpty {
+            Button("强制结束并卸载…", role: .destructive) {
+                confirmingForceQuit = true
+            }
+            .disabled(model.isPlanning || model.isRemoving)
+        }
+    }
+
+    /// Something the user can quit is holding files in this plan.
+    private var hasBlockers: Bool {
+        !model.inUseRows.isEmpty && !model.blockingTargets.isEmpty
+    }
+
+    private var blockerNames: String {
+        model.blockingTargets.map(\.name).joined(separator: "、")
+    }
+
+    private var hasStatus: Bool {
+        model.summary != nil
+            || hasBlockers
+            || !model.deniedRows.isEmpty
+            || model.needsHelper
+    }
+
+    private var footer: some View {
+        VStack(spacing: 0) {
+            Divider()
+            if hasStatus {
+                status
+                    .font(.callout)
+                    .controlSize(.small)
+                    // Sentences take the width they are given and never ask
+                    // for more — see `permissionBannerInset`.
+                    .frame(minWidth: 0, idealWidth: 0, maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
+                Divider()
+            }
+            HStack(spacing: 14) {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("已选 \(ByteFormat.string(model.selectedBytes))")
+                        .font(.headline)
+                        .monospacedDigit()
+                    Text("\(model.selection.count) 项 · 先移入隔离区，随时可以还原")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                Menu("选择") {
+                    Button("全选") { model.selectAll() }
+                    Button("全不选") { model.deselectAll() }
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .disabled(model.rows.isEmpty || model.isRemoving)
+
+                Button {
+                    confirming = true
+                } label: {
+                    if model.isRemoving {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Text("卸载…")
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .keyboardShortcut(.return, modifiers: .command)
+                .disabled(model.selection.isEmpty || model.isRemoving)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+        }
+        .background(.bar)
+    }
+}
+
+/// A small status dot before the text, the way Activity Monitor and System
+/// Settings mark something live.
+private struct RunningLabelStyle: LabelStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 5) {
+            configuration.icon.imageScale(.small).font(.system(size: 7))
+            configuration.title.foregroundStyle(.secondary)
+        }
     }
 }
 
@@ -337,16 +422,15 @@ struct UninstallRow: View {
                 .toggleStyle(.checkbox)
                 .disabled(!row.isSelectable)
                 .help(row.isSelectable ? "" : row.decision.rationale)
+                .accessibilityLabel("卸载 \(row.candidate.item.displayName)")
 
             VStack(alignment: .leading, spacing: 1) {
                 Text(row.candidate.item.displayName)
-                    .font(.system(size: 13))
-                    .foregroundStyle(Theme.label)
                     .lineLimit(1)
                     .opacity(row.isSelectable ? 1 : 0.55)
                 Text(row.candidate.item.abbreviatedPath)
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundStyle(Theme.tertiaryLabel)
+                    .font(.subheadline)
+                    .foregroundStyle(.tertiary)
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .opacity(row.isSelectable ? 1 : 0.55)
@@ -359,10 +443,9 @@ struct UninstallRow: View {
                 // is legible.
                 if !row.isSelectable {
                     Text(row.decision.rationale)
-                        .font(.system(size: 11))
-                        .foregroundStyle(Theme.secondaryLabel)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
                         .lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
                         .padding(.top, 1)
                 }
             }
@@ -373,9 +456,8 @@ struct UninstallRow: View {
                 AdmissionBadge(decision: row.decision)
             }
             Text(ByteFormat.string(row.candidate.item.sizeBytes))
-                .font(.system(size: 13))
                 .monospacedDigit()
-                .foregroundStyle(isChecked ? Theme.junk : Theme.secondaryLabel)
+                .foregroundStyle(isChecked ? Theme.junk : .secondary)
                 .frame(width: 70, alignment: .trailing)
         }
         .padding(.vertical, 1)
