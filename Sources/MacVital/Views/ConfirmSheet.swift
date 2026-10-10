@@ -33,7 +33,7 @@ struct ConfirmSheet: View {
             GroupBox {
                 HStack(spacing: 10) {
                     Image(systemName: "clock.arrow.circlepath")
-                        .foregroundStyle(.blue)
+                        .foregroundStyle(Color.accentColor)
                     VStack(alignment: .leading, spacing: 2) {
                         Text("这一步不会真正删除任何东西。")
                             .font(.callout.weight(.medium))

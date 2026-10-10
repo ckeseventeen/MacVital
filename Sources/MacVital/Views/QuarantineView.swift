@@ -9,6 +9,12 @@ struct QuarantineView: View {
     @Binding var isPresented: Bool
     @State private var model: QuarantineViewModel
     @State private var confirmPurgeAll = false
+    /// The record a single "delete now" is waiting on. Permanent deletion is
+    /// the one thing this sheet does that cannot be undone, and the row
+    /// button used to do it on the first click while emptying the whole
+    /// quarantine asked first — the same act, one confirmed and one not.
+    @State private var pendingPurge: QuarantineRecord?
+    @State private var confirmDiscardOrphans = false
 
     /// The environment is passed explicitly rather than read from
     /// `@EnvironmentObject`, because the view model has to be constructed with
@@ -34,7 +40,7 @@ struct QuarantineView: View {
             Divider()
             footer
         }
-        .frame(width: 720, height: 520)
+        .frame(minWidth: 620, idealWidth: 720, minHeight: 420, idealHeight: 520)
         .task { await model.reload() }
         .alert(
             "操作失败",
@@ -59,6 +65,33 @@ struct QuarantineView: View {
         } message: {
             Text("此操作不可撤销，共 \(model.records.count) 项、\(ByteFormat.string(model.totalBytes))。")
         }
+        .confirmationDialog(
+            "永久删除「\(pendingPurge?.displayName ?? "")」？",
+            isPresented: Binding(get: { pendingPurge != nil }, set: { if !$0 { pendingPurge = nil } }),
+            titleVisibility: .visible
+        ) {
+            Button("永久删除", role: .destructive) {
+                guard let record = pendingPurge else { return }
+                pendingPurge = nil
+                Task { await model.purge(record) }
+            }
+            Button("取消", role: .cancel) { pendingPurge = nil }
+        } message: {
+            Text("此操作不可撤销。不删的话它会在 \(pendingPurge?.daysRemaining ?? 0) 天后自动清除，期间随时可以还原。")
+        }
+        .confirmationDialog(
+            "永久删除 \(model.orphans.count) 个无主容器？",
+            isPresented: $confirmDiscardOrphans,
+            titleVisibility: .visible
+        ) {
+            Button("永久删除", role: .destructive) {
+                Task { await model.discardOrphans() }
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("其中 \(model.orphansWithContent) 个装着文件，共 \(ByteFormat.string(model.orphanBytes))。"
+                 + "它们没有记录，删了无法还原；不确定的话先「在访达中显示」看一眼。")
+        }
     }
 
     private var header: some View {
@@ -71,7 +104,7 @@ struct QuarantineView: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            Button("关闭") { isPresented = false }
+            Button("完成") { isPresented = false }
                 .keyboardShortcut(.cancelAction)
         }
         .padding(16)
@@ -97,8 +130,14 @@ struct QuarantineView: View {
             Spacer(minLength: 8)
             Button("在访达中显示") { model.revealOrphans() }
                 .controlSize(.small)
-            Button(model.isReaping ? "清理中…" : "清理") {
-                Task { await model.discardOrphans() }
+            Button(model.isReaping ? "清理中…" : "清理…") {
+                // Empty folders carry nothing to lose; only ask when there is
+                // something inside.
+                if model.orphansWithContent > 0 {
+                    confirmDiscardOrphans = true
+                } else {
+                    Task { await model.discardOrphans() }
+                }
             }
             .disabled(model.isBusy)
         }
@@ -108,14 +147,11 @@ struct QuarantineView: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: 8) {
-            Image(systemName: "tray")
-                .font(.largeTitle)
-                .foregroundStyle(.quaternary)
-            Text("隔离区是空的")
-                .foregroundStyle(.tertiary)
+        ContentUnavailableView {
+            Label("隔离区是空的", systemImage: "tray")
+        } description: {
+            Text("清理和卸载移走的文件会先放在这里，到期前随时可以还原。")
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var list: some View {
@@ -163,19 +199,37 @@ struct QuarantineView: View {
                     }
                     .help(blocker.help)
                 } else {
-                    VStack(spacing: 4) {
+                    HStack(spacing: 6) {
                         Button("还原") { Task { await model.restore(record) } }
                             .controlSize(.small)
                             .disabled(model.isBusy)
-                        Button("立即删除") { Task { await model.purge(record) } }
-                            .controlSize(.small)
-                            .disabled(model.isBusy)
+                        Menu {
+                            Button("在访达中显示") { model.revealInFinder(record) }
+                            Divider()
+                            Button("立即删除…", role: .destructive) { pendingPurge = record }
+                        } label: {
+                            Image(systemName: "ellipsis.circle")
+                        }
+                        .menuStyle(.borderlessButton)
+                        .menuIndicator(.hidden)
+                        .fixedSize()
+                        .disabled(model.isBusy)
+                        .accessibilityLabel("更多操作")
                     }
                 }
             }
             .padding(.vertical, 4)
             .contextMenu {
+                if model.blocker(for: record) == nil {
+                    Button("还原") { Task { await model.restore(record) } }
+                        .disabled(model.isBusy)
+                }
                 Button("在访达中显示") { model.revealInFinder(record) }
+                if model.blocker(for: record) == nil {
+                    Divider()
+                    Button("立即删除…", role: .destructive) { pendingPurge = record }
+                        .disabled(model.isBusy)
+                }
             }
         }
         .listStyle(.inset)
@@ -187,7 +241,7 @@ struct QuarantineView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             Spacer()
-            Button("清空隔离区", role: .destructive) { confirmPurgeAll = true }
+            Button("清空隔离区…", role: .destructive) { confirmPurgeAll = true }
                 .disabled(model.records.isEmpty || model.isBusy)
         }
         .padding(12)
