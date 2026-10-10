@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import QuickLook
 import MacVitalKit
 
 /// Scan results as a sortable table, the way Finder and Disk Utility show
@@ -31,6 +32,10 @@ struct FindingsTable: View {
     /// window.
     @SceneStorage("junk.columns")
     private var columnCustomization = TableColumnCustomization<Finding>()
+
+    /// The file Quick Look is showing, if it is open.
+    @State private var quickLookURL: URL?
+    @State private var spaceMonitor = MonitorToken()
 
     var body: some View {
         Table(
@@ -102,6 +107,53 @@ struct FindingsTable: View {
             // nothing useful.
             reveal(ids)
         }
+        // Space to look before deciding, as in Finder. Read-only — Quick
+        // Look never writes — and the arrow keys step through the selected
+        // rows while it is open.
+        .quickLookPreview($quickLookURL, in: selectedURLs)
+        .onAppear { installSpaceMonitor() }
+        .onDisappear { removeSpaceMonitor() }
+    }
+
+    // MARK: - Quick Look
+
+    /// Space toggles Quick Look while a table has keyboard focus.
+    ///
+    /// A local event monitor rather than `onKeyPress`, which never sees the
+    /// key: underneath, `Table` is an `NSTableView`, and that takes printable
+    /// keys for type-select before SwiftUI is asked. The focus check keeps a
+    /// space typed into the search field a space.
+    private func installSpaceMonitor() {
+        guard spaceMonitor.token == nil else { return }
+        let model = self.model
+        let rowSelection = $rowSelection
+        let quickLookURL = $quickLookURL
+        spaceMonitor.token = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            guard event.keyCode == 49,
+                  event.modifierFlags.intersection(.deviceIndependentFlagsMask).isEmpty,
+                  event.window?.firstResponder is NSTableView
+            else { return event }
+            if quickLookURL.wrappedValue != nil {
+                quickLookURL.wrappedValue = nil
+                return nil
+            }
+            let selected = rowSelection.wrappedValue
+            guard let first = model.findings.first(where: { selected.contains($0.id) }) else {
+                return event
+            }
+            quickLookURL.wrappedValue = first.item.url
+            return nil
+        }
+    }
+
+    private func removeSpaceMonitor() {
+        if let token = spaceMonitor.token { NSEvent.removeMonitor(token) }
+        spaceMonitor.token = nil
+    }
+
+    /// Selected rows' files, in table order.
+    private var selectedURLs: [URL] {
+        findings.filter { rowSelection.contains($0.id) }.map(\.item.url)
     }
 
     private func checkBinding(for finding: Finding) -> Binding<Bool> {
@@ -130,6 +182,9 @@ struct FindingsTable: View {
                 }
             }
             Divider()
+        }
+        Button("快速查看") {
+            quickLookURL = findings.first { ids.contains($0.id) }?.item.url
         }
         Button("在访达中显示") { reveal(ids) }
         Button("拷贝路径") {
@@ -181,4 +236,10 @@ extension Finding {
 
     /// Undated entries sort as oldest rather than being impossible to sort.
     var modifiedSortKey: Date { item.lastModified ?? .distantPast }
+}
+
+/// Holds an `NSEvent` monitor across view updates; a struct `@State` would
+/// lose track of which monitor to remove.
+private final class MonitorToken {
+    var token: Any?
 }
