@@ -3,7 +3,8 @@ import MacVitalKit
 import SwiftUI
 
 @MainActor
-final class ScanViewModel: ObservableObject {
+@Observable
+final class ScanViewModel {
     enum Phase: Equatable {
         case idle
         case scanning
@@ -19,19 +20,19 @@ final class ScanViewModel: ObservableObject {
         var skipped: [String]
     }
 
-    @Published private(set) var phase: Phase = .idle
-    @Published private(set) var findings: [Finding] = []
-    @Published var selection: Set<UUID> = []
-    @Published var enabledCategories: Set<ScanCategory> = Set(ScanCategory.sweepCategories)
-    @Published var focusedCategory: ScanCategory?
-    @Published var selectedFindingID: UUID?
-    @Published private(set) var progressText: String = ""
-    @Published private(set) var progressFraction: Double = 0
-    @Published private(set) var lastScanDuration: TimeInterval = 0
-    @Published private(set) var deniedCount: Int = 0
-    @Published private(set) var scanWarnings: [String] = []
-    @Published var errorMessage: String?
-    @Published private(set) var cleanupProgress: (done: Int, total: Int) = (0, 0)
+    private(set) var phase: Phase = .idle
+    private(set) var findings: [Finding] = []
+    var selection: Set<UUID> = []
+    var enabledCategories: Set<ScanCategory> = Set(ScanCategory.sweepCategories)
+    var focusedCategory: ScanCategory?
+    var selectedFindingID: UUID?
+    private(set) var progressText: String = ""
+    private(set) var progressFraction: Double = 0
+    private(set) var lastScanDuration: TimeInterval = 0
+    private(set) var deniedCount: Int = 0
+    private(set) var scanWarnings: [String] = []
+    var errorMessage: String?
+    private(set) var cleanupProgress: (done: Int, total: Int) = (0, 0)
 
     private let environment: AppEnvironment
     private var scanTask: Task<Void, Never>?

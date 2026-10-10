@@ -3,7 +3,8 @@ import AppKit
 import MacVitalKit
 
 @MainActor
-final class UninstallViewModel: ObservableObject {
+@Observable
+final class UninstallViewModel {
     struct Row: Identifiable {
         let candidate: AppUninstallPlanner.Candidate
         let decision: RuleDecision
@@ -23,21 +24,21 @@ final class UninstallViewModel: ObservableObject {
         }
     }
 
-    @Published private(set) var apps: [InstalledAppIndex.App] = []
-    @Published var query: String = ""
-    @Published private(set) var selectedApp: InstalledAppIndex.App?
-    @Published private(set) var rows: [Row] = []
-    @Published var selection: Set<UUID> = []
-    @Published private(set) var isPlanning = false
-    @Published private(set) var isRemoving = false
-    @Published private(set) var summary: String?
+    private(set) var apps: [InstalledAppIndex.App] = []
+    var query: String = ""
+    private(set) var selectedApp: InstalledAppIndex.App?
+    private(set) var rows: [Row] = []
+    var selection: Set<UUID> = []
+    private(set) var isPlanning = false
+    private(set) var isRemoving = false
+    private(set) var summary: String?
     /// What a re-plan found still on disk after the removal ran.
     ///
     /// "卸载干净" is a claim about coverage, and coverage is the one thing the
     /// app cannot verify by reasoning about its own code. So it re-runs the
     /// planner afterwards and shows whatever is left — including nothing, which
     /// is the answer that makes the claim worth anything.
-    @Published private(set) var leftovers: [Row] = []
+    private(set) var leftovers: [Row] = []
 
     private let environment: AppEnvironment
     private var installedApps: [InstalledAppIndex.App] = []
@@ -112,10 +113,10 @@ final class UninstallViewModel: ObservableObject {
 
     /// True when a graceful quit has been tried and something is still up, so
     /// the UI may offer the harsher option. Never true before that.
-    @Published private(set) var quitWasRefused = false
+    private(set) var quitWasRefused = false
     /// Targets a graceful quit could not close, named so the confirmation can
     /// say what is about to be killed.
-    @Published private(set) var stubbornTargets: [String] = []
+    private(set) var stubbornTargets: [String] = []
 
     var needsHelper: Bool {
         rows.contains { selection.contains($0.id) && $0.decision.admission == .allowWithPrivilege }

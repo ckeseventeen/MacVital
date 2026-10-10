@@ -10,7 +10,8 @@ import ScreenCaptureKit
 /// go directly into an `AVAssetWriter` — no intermediate images, no frame
 /// queue of our own to get wrong.
 @MainActor
-final class ScreenRecorder: NSObject, ObservableObject {
+@Observable
+final class ScreenRecorder: NSObject {
 
     enum State: Equatable {
         case idle
@@ -29,14 +30,14 @@ final class ScreenRecorder: NSObject, ObservableObject {
         var bytes: Int64
     }
 
-    @Published private(set) var state: State = .idle
-    @Published private(set) var latest: Recording?
-    @Published var errorMessage: String?
+    private(set) var state: State = .idle
+    private(set) var latest: Recording?
+    var errorMessage: String?
     /// Frames per second. 30 is plenty for screen content and halves the file
     /// size versus 60; 60 is there for anything with animation.
-    @Published var frameRate: Int = 30
+    var frameRate: Int = 30
     /// Whether to keep the cursor in the recording.
-    @Published var showsCursor: Bool = true
+    var showsCursor: Bool = true
 
     private var stream: SCStream?
     /// Owns the writer and receives frames directly on `sampleQueue`.

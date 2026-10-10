@@ -9,17 +9,17 @@ struct MacVitalApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     // No custom `init()`: SwiftUI initialises property-wrapper defaults on the
     // main actor, which is what `AppEnvironment` and its view models require.
-    @StateObject private var environment = AppEnvironment()
+    @State private var environment = AppEnvironment()
 
     var body: some Scene {
         Window("PureMark", id: Self.mainWindowID) {
             RootView()
-                .environmentObject(environment)
-                .environmentObject(environment.scanModel)
-                .environmentObject(environment.screenPen)
-                .environmentObject(environment.screenshots)
-                .environmentObject(environment.recorder)
-                .environmentObject(environment.live)
+                .environment(environment)
+                .environment(environment.scanModel)
+                .environment(environment.screenPen)
+                .environment(environment.screenshots)
+                .environment(environment.recorder)
+                .environment(environment.live)
                 .frame(minWidth: 1000, minHeight: 640)
                 .preferredColorScheme(environment.settings.appearanceMode.colorScheme)
                 .task { await environment.bootstrap() }
@@ -46,12 +46,12 @@ struct MacVitalApp: App {
 
         Settings {
             SettingsView()
-                .environmentObject(environment)
-                .environmentObject(environment.settings)
-                .environmentObject(environment.screenPen)
-                .environmentObject(environment.screenshots)
-                .environmentObject(environment.recorder)
-                .environmentObject(environment.live)
+                .environment(environment)
+                .environment(environment.settings)
+                .environment(environment.screenPen)
+                .environment(environment.screenshots)
+                .environment(environment.recorder)
+                .environment(environment.live)
                 .frame(width: 560)
                 .preferredColorScheme(environment.settings.appearanceMode.colorScheme)
         }

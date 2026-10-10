@@ -4,8 +4,8 @@ import MacVitalKit
 /// Hosts the shell and every sheet. The shell itself is layout only — sheet
 /// state lives on `AppEnvironment` because more than one page raises them.
 struct RootView: View {
-    @EnvironmentObject private var environment: AppEnvironment
-    @EnvironmentObject private var model: ScanViewModel
+    @Environment(AppEnvironment.self) private var environment
+    @Environment(ScanViewModel.self) private var model
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
@@ -25,13 +25,13 @@ struct RootView: View {
                     openWindow(id: MacVitalApp.mainWindowID)
                 }
             }
-            .sheet(isPresented: $environment.showConfirm) {
-                ConfirmSheet(isPresented: $environment.showConfirm)
-                    .environmentObject(model)
-                    .environmentObject(environment)
+            .sheet(isPresented: Bindable(environment).showConfirm) {
+                ConfirmSheet(isPresented: Bindable(environment).showConfirm)
+                    .environment(model)
+                    .environment(environment)
             }
-            .sheet(isPresented: $environment.showQuarantine) {
-                QuarantineView(isPresented: $environment.showQuarantine, environment: environment)
+            .sheet(isPresented: Bindable(environment).showQuarantine) {
+                QuarantineView(isPresented: Bindable(environment).showQuarantine, environment: environment)
             }
             .alert(
                 "扫描出错",
@@ -63,7 +63,7 @@ struct RootView: View {
 ///    the prominent action rather than one hidden behind having visited
 ///    Settings first.
 struct PermissionBanner: View {
-    @EnvironmentObject private var environment: AppEnvironment
+    @Environment(AppEnvironment.self) private var environment
 
     private var permissions: PermissionsCoordinator { environment.permissions }
     private var isDenied: Bool { permissions.fullDiskAccess == .denied }
@@ -179,8 +179,8 @@ private struct BannerNote: View {
 /// Shown as an overlay on the junk page after a run.
 struct CleanupSummaryView: View {
     let summary: ScanViewModel.CleanupSummary
-    @EnvironmentObject private var model: ScanViewModel
-    @EnvironmentObject private var environment: AppEnvironment
+    @Environment(ScanViewModel.self) private var model
+    @Environment(AppEnvironment.self) private var environment
     @State private var showSkipped = false
 
     var body: some View {

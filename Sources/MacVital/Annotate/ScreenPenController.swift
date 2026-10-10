@@ -7,17 +7,28 @@ import SwiftUI
 /// canvas, plus a floating palette. The palette is its own window rather than a
 /// view inside the canvas so that clicking a colour never lays down a stroke.
 @MainActor
-final class ScreenPenController: NSObject, ObservableObject {
+@Observable
+final class ScreenPenController: NSObject {
 
     static let palette = AnnotationPalette.colors
     static let widths = AnnotationPalette.widths
 
-    @Published private(set) var isActive = false
-    @Published var tool: AnnotationTool = .pen { didSet { applyTool() } }
-    @Published var colorIndex = 0 { didSet { applyTool() } }
-    @Published var widthIndex = 1 { didSet { applyTool() } }
-    @Published var focusMode: FocusMode = .off { didSet { applyFocus() } }
-    @Published private(set) var canUndo = false
+    private(set) var isActive = false {
+        didSet { if isActive != oldValue { onActiveChange?() } }
+    }
+
+    /// Called when drawing starts or stops, for the menu bar pen item.
+    ///
+    /// That item is AppKit and outside Observation's reach. It used to
+    /// subscribe to `objectWillChange`, which fired on *every* published
+    /// change — every colour pick and width tap — to refresh a glyph that only
+    /// depends on this one flag.
+    @ObservationIgnored var onActiveChange: (() -> Void)?
+    var tool: AnnotationTool = .pen { didSet { applyTool() } }
+    var colorIndex = 0 { didSet { applyTool() } }
+    var widthIndex = 1 { didSet { applyTool() } }
+    var focusMode: FocusMode = .off { didSet { applyFocus() } }
+    private(set) var canUndo = false
 
     private var canvases: [AnnotationCanvasView] = []
     private var focusLayers: [FocusOverlayView] = []
@@ -292,7 +303,7 @@ private extension Array {
 
 /// The floating toolbar: tools, colours, widths, focus mode, undo, clear, exit.
 private struct PenPalette: View {
-    @ObservedObject var controller: ScreenPenController
+    @Bindable var controller: ScreenPenController
 
     private let tools: [AnnotationTool] = [.select, .pen, .highlighter, .rectangle, .ellipse, .arrow, .text, .eraser]
 

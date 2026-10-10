@@ -8,15 +8,15 @@ import MacVitalKit
 /// than shelling out to `launchctl`. That buys the one property that matters
 /// here: everything is reversible for the retention window.
 struct StartupPage: View {
-    @EnvironmentObject private var environment: AppEnvironment
-    @StateObject private var model: StartupViewModel
+    @Environment(AppEnvironment.self) private var environment
+    @State private var model: StartupViewModel
     @State private var confirming = false
     /// The row whose process refused a graceful quit. Set only after one has
     /// been tried and failed.
     @State private var forceTarget: StartupViewModel.Row?
 
     init(environment: AppEnvironment) {
-        _model = StateObject(wrappedValue: StartupViewModel(environment: environment))
+        _model = State(initialValue: StartupViewModel(environment: environment))
     }
 
     var body: some View {

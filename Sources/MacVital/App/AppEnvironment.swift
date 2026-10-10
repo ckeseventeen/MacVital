@@ -1,27 +1,27 @@
 import AppKit
-import Combine
 import Foundation
 import MacVitalKit
 import SwiftUI
 
 /// Wiring. Owns the long-lived objects and hands them to the view models.
 @MainActor
-final class AppEnvironment: ObservableObject {
+@Observable
+final class AppEnvironment {
     let settings: AppSettings
     let permissions = PermissionsCoordinator()
     let rules = RuleIndex()
     let quarantine: QuarantineStore
     let helper = HelperClient()
 
-    @Published var helperStatus: HelperStatus = .notRegistered
-    @Published var quarantineBytes: Int64 = 0
-    @Published var quarantineRecords: [QuarantineRecord] = []
+    var helperStatus: HelperStatus = .notRegistered
+    var quarantineBytes: Int64 = 0
+    var quarantineRecords: [QuarantineRecord] = []
 
     private(set) var quarantineRoot: String
 
     /// The scan view model lives here rather than in the `App` struct so the
     /// app has exactly one environment instance and no custom `App.init()`.
-    lazy var scanModel: ScanViewModel = ScanViewModel(environment: self)
+    @ObservationIgnored lazy var scanModel: ScanViewModel = ScanViewModel(environment: self)
 
     let networkSpeeds = NetworkSpeedMonitor()
     let screenPen = ScreenPenController()
@@ -29,19 +29,16 @@ final class AppEnvironment: ObservableObject {
     let screenshots = ScreenshotService()
     let recorder = ScreenRecorder()
     let live = LiveBroadcaster()
-    private lazy var menuBar = MenuBarController(speeds: networkSpeeds, environment: self)
-    private var speedObservation: AnyCancellable?
-    private var penObservation: AnyCancellable?
-    private var permissionObservation: AnyCancellable?
+    @ObservationIgnored private lazy var menuBar = MenuBarController(speeds: networkSpeeds, environment: self)
 
     /// Which page the shell is showing.
-    @Published var page: AppPage = .dashboard
-    @Published var diskSpace: DiskSpace.Snapshot?
+    var page: AppPage = .dashboard
+    var diskSpace: DiskSpace.Snapshot?
     /// Sheet state lives here rather than in a view: the dashboard's quick
     /// actions and the junk page's footer both raise them from different
     /// branches of the tree.
-    @Published var showConfirm = false
-    @Published var showQuarantine = false
+    var showConfirm = false
+    var showQuarantine = false
 
     init() {
         // The retention window is a user setting, and the confirm sheet quotes
@@ -54,20 +51,16 @@ final class AppEnvironment: ObservableObject {
         self.quarantine = store
         self.quarantineRoot = store.root.path
 
-        // `permissions` is a nested ObservableObject, and SwiftUI does not
-        // propagate those: a view observing `AppEnvironment` and reading
-        // `environment.permissions.fullDiskAccess` renders once and then never
-        // hears about a change. That is exactly what happened — the permission
-        // banner captured `.unknown` at first render and stayed there for the
-        // life of the process, so re-probing, granting access and relaunching
-        // all appeared to do nothing.
+        // There used to be a Combine subscription here forwarding
+        // `permissions.objectWillChange` to this object's, because a nested
+        // `ObservableObject` does not propagate: a view reading
+        // `environment.permissions.fullDiskAccess` rendered once and never
+        // heard about a change, and the permission banner sat on `.unknown`
+        // for the life of the process.
         //
-        // Forwarding here rather than injecting `permissions` as its own
-        // environment object because three views read it through
-        // `environment`, and a missing `.environmentObject()` at any scene
-        // root is a crash rather than a stale banner.
-        permissionObservation = permissions.objectWillChange
-            .sink { [weak self] _ in self?.objectWillChange.send() }
+        // Observation tracks the access path itself, so that read now
+        // registers a dependency on `permissions.fullDiskAccess` directly. The
+        // workaround existed only because of the old model's defect.
     }
 
     var coordinator: CleanupCoordinator {
@@ -88,7 +81,7 @@ final class AppEnvironment: ObservableObject {
     /// action. Once the window is closed the scene is torn down and it is no
     /// longer in `NSApp.windows`, so the AppKit route — `makeKeyAndOrderFront`
     /// — has nothing to raise. `RootView` registers this while it exists.
-    private var mainWindowOpener: (() -> Void)?
+    @ObservationIgnored private var mainWindowOpener: (() -> Void)?
 
     func registerMainWindowOpener(_ open: @escaping () -> Void) {
         mainWindowOpener = open
@@ -112,7 +105,7 @@ final class AppEnvironment: ObservableObject {
     /// residency that window can be closed and reopened any number of times.
     /// Re-running the launch sequence on every reopen would re-sweep the
     /// quarantine and re-probe permissions for no reason.
-    private var didBootstrap = false
+    @ObservationIgnored private var didBootstrap = false
 
     func bootstrap() async {
         guard !didBootstrap else { return }
@@ -140,33 +133,25 @@ final class AppEnvironment: ObservableObject {
     /// the monitor's lifetime — no point sampling interface counters once a
     /// second for a readout nobody is showing.
     func applyMenuBarSetting() {
+        // The status items are AppKit, so they are told about changes
+        // explicitly rather than observed. Both callbacks hand over the value
+        // the item renders, after it has been stored — never a "something is
+        // about to change" signal that would leave the item one sample behind.
         if settings.showMenuBarSpeed {
             menuBar.show()
-            if speedObservation == nil {
-                // Observe the actual values rather than `objectWillChange`,
-                // which fires before @Published stores them and can leave the
-                // status item rendering the previous sample indefinitely.
-                speedObservation = networkSpeeds.$downloadRate
-                    .combineLatest(networkSpeeds.$uploadRate)
-                    .sink { [weak self] download, upload in
-                        self?.menuBar.render(download: download, upload: upload)
-                    }
+            networkSpeeds.onSample = { [weak self] download, upload in
+                self?.menuBar.render(download: download, upload: upload)
             }
         } else {
-            speedObservation = nil
+            networkSpeeds.onSample = nil
             menuBar.hide()
         }
 
         if settings.showMenuBarPen {
             menuBar.showPenItem()
-            if penObservation == nil {
-                penObservation = screenPen.objectWillChange
-                    .sink { [weak self] _ in
-                        Task { @MainActor in self?.menuBar.refreshPenItem() }
-                    }
-            }
+            screenPen.onActiveChange = { [weak self] in self?.menuBar.refreshPenItem() }
         } else {
-            penObservation = nil
+            screenPen.onActiveChange = nil
             screenPen.stop()
             menuBar.hidePenItem()
         }

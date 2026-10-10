@@ -4,11 +4,11 @@ import MacVitalKit
 /// The findings table, split out of the old `ScanResultView` so both the page
 /// and the detail inspector can live inside the new shell.
 struct FindingsList: View {
-    @EnvironmentObject private var model: ScanViewModel
+    @Environment(ScanViewModel.self) private var model
 
     var body: some View {
         HSplitView {
-            List(selection: $model.selectedFindingID) {
+            List(selection: Bindable(model).selectedFindingID) {
                 ForEach(groupedFindings, id: \.key) { group in
                     Section {
                         ForEach(group.value) { finding in

@@ -48,8 +48,8 @@ enum AppPage: String, CaseIterable, Identifiable {
 /// storage readout at the bottom. This is a plain `HStack`, which is all the
 /// design actually needs.
 struct AppShell: View {
-    @EnvironmentObject private var environment: AppEnvironment
-    @EnvironmentObject private var model: ScanViewModel
+    @Environment(AppEnvironment.self) private var environment
+    @Environment(ScanViewModel.self) private var model
 
     var body: some View {
         HStack(spacing: 0) {

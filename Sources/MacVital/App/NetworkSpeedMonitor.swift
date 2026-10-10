@@ -9,12 +9,22 @@ import Darwin
 /// wrap every 4 GB — minutes apart on a fast link, and every wrap shows up as a
 /// bogus spike or a dead second. `if_msghdr2` carries `if_data64`.
 @MainActor
-final class NetworkSpeedMonitor: ObservableObject {
+@Observable
+final class NetworkSpeedMonitor {
     typealias Sample = NetworkByteCounters
 
     /// Bytes per second, smoothed.
-    @Published private(set) var downloadRate: Double = 0
-    @Published private(set) var uploadRate: Double = 0
+    private(set) var downloadRate: Double = 0
+    private(set) var uploadRate: Double = 0
+
+    /// Called after every sample with the new rates.
+    ///
+    /// SwiftUI views read the two properties above and are tracked
+    /// automatically. The menu bar readout is an `NSStatusItem`, which
+    /// Observation knows nothing about, so it gets told explicitly. This
+    /// replaced a Combine `combineLatest` over the two `@Published` projections
+    /// — the same push, minus a framework.
+    @ObservationIgnored var onSample: ((_ download: Double, _ upload: Double) -> Void)?
 
     private var previous: Sample?
     private var previousTime: CFAbsoluteTime?
@@ -67,6 +77,7 @@ final class NetworkSpeedMonitor: ObservableObject {
         let rawUp = Double(deltaOut) / elapsed
         downloadRate += (rawDown - downloadRate) * smoothing
         uploadRate += (rawUp - uploadRate) * smoothing
+        onSample?(downloadRate, uploadRate)
     }
 
     // MARK: - Kernel counters

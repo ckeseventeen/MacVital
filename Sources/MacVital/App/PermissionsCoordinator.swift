@@ -7,7 +7,8 @@ import MacVitalKit
 /// protected. So the permission state is a first-class thing the UI shows,
 /// not an error surfaced when a scan comes back empty.
 @MainActor
-final class PermissionsCoordinator: ObservableObject {
+@Observable
+final class PermissionsCoordinator {
     enum State: Equatable {
         case granted
         case denied
@@ -16,13 +17,13 @@ final class PermissionsCoordinator: ObservableObject {
         case unknown
     }
 
-    @Published private(set) var fullDiskAccess: State = .unknown
+    private(set) var fullDiskAccess: State = .unknown
     /// Set once the user has been sent to System Settings.
-    @Published private(set) var didOpenSettings = false
+    private(set) var didOpenSettings = false
     /// When `refresh()` last ran. Shown in the banner purely so that pressing
     /// "re-check" visibly does *something* — the state itself usually cannot
     /// change within one process lifetime (see `mustRelaunchToTakeEffect`).
-    @Published private(set) var lastCheckedAt: Date?
+    private(set) var lastCheckedAt: Date?
 
     /// macOS binds Full Disk Access at **process launch**. Toggling it in
     /// System Settings does not reach a process that is already running —
@@ -61,7 +62,7 @@ final class PermissionsCoordinator: ObservableObject {
     /// to show a dialog for this service and posts a notification instead, so
     /// an app that does not report the state itself leaves the user with
     /// nothing to act on.
-    @Published private(set) var screenRecording: State = .unknown
+    private(set) var screenRecording: State = .unknown
 
     /// TCC-protected files, tried in order. Several, because none of them is
     /// guaranteed to exist: the per-user TCC database that older code probes

@@ -2,8 +2,8 @@ import SwiftUI
 import MacVitalKit
 
 struct SettingsView: View {
-    @EnvironmentObject private var environment: AppEnvironment
-    @EnvironmentObject private var settings: AppSettings
+    @Environment(AppEnvironment.self) private var environment
+    @Environment(AppSettings.self) private var settings
 
     var body: some View {
         TabView {
@@ -23,13 +23,13 @@ struct SettingsView: View {
 // MARK: - General
 
 struct GeneralSettings: View {
-    @EnvironmentObject private var environment: AppEnvironment
-    @EnvironmentObject private var settings: AppSettings
+    @Environment(AppEnvironment.self) private var environment
+    @Environment(AppSettings.self) private var settings
 
     var body: some View {
         Form {
             Section {
-                Picker("外观", selection: $settings.appearanceMode) {
+                Picker("外观", selection: Bindable(settings).appearanceMode) {
                     ForEach(AppearanceMode.allCases) { mode in
                         Label(mode.title, systemImage: mode.symbolName).tag(mode)
                     }
@@ -45,7 +45,7 @@ struct GeneralSettings: View {
             }
 
             Section {
-                Toggle("关闭窗口后继续在后台运行", isOn: $settings.keepRunningInBackground)
+                Toggle("关闭窗口后继续在后台运行", isOn: Bindable(settings).keepRunningInBackground)
             } header: {
                 Text("后台")
             } footer: {
@@ -56,11 +56,11 @@ struct GeneralSettings: View {
             }
 
             Section {
-                Toggle("在菜单栏显示网速", isOn: $settings.showMenuBarSpeed)
+                Toggle("在菜单栏显示网速", isOn: Bindable(settings).showMenuBarSpeed)
                     .onChange(of: settings.showMenuBarSpeed) { _, _ in
                         environment.applyMenuBarSetting()
                     }
-                Toggle("在菜单栏显示快捷工具", isOn: $settings.showMenuBarPen)
+                Toggle("在菜单栏显示快捷工具", isOn: Bindable(settings).showMenuBarPen)
                     .onChange(of: settings.showMenuBarPen) { _, _ in
                         environment.applyMenuBarSetting()
                     }
@@ -80,14 +80,14 @@ struct GeneralSettings: View {
 // MARK: - Advisor
 
 struct AdvisorSettings: View {
-    @EnvironmentObject private var settings: AppSettings
+    @Environment(AppSettings.self) private var settings
     @State private var apiKeyDraft: String = ""
     @State private var localReachable: Bool?
 
     var body: some View {
         Form {
             Section {
-                Picker("判定方式", selection: $settings.advisorMode) {
+                Picker("判定方式", selection: Bindable(settings).advisorMode) {
                     ForEach(AdvisorMode.allCases) { mode in
                         Text(mode.title).tag(mode)
                     }
@@ -108,8 +108,8 @@ struct AdvisorSettings: View {
 
             if settings.advisorMode == .local {
                 Section("本地模型") {
-                    TextField("地址", text: $settings.localModelEndpoint)
-                    TextField("模型名", text: $settings.localModelName)
+                    TextField("地址", text: Bindable(settings).localModelEndpoint)
+                    TextField("模型名", text: Bindable(settings).localModelName)
                     HStack {
                         Button("测试连接") { Task { await testLocal() } }
                         if let localReachable {
@@ -166,7 +166,7 @@ struct AdvisorSettings: View {
 // MARK: - Scan
 
 struct ScanSettings: View {
-    @EnvironmentObject private var settings: AppSettings
+    @Environment(AppSettings.self) private var settings
     @State private var rootsDraft: String = ""
 
     var body: some View {
@@ -195,13 +195,13 @@ struct ScanSettings: View {
             Section("阈值") {
                 Stepper(
                     "大文件阈值：\(settings.largeFileThresholdMB) MB",
-                    value: $settings.largeFileThresholdMB,
+                    value: Bindable(settings).largeFileThresholdMB,
                     in: 50...4096,
                     step: 50
                 )
                 Stepper(
                     "项目搜索深度：\(settings.projectSearchDepth) 层",
-                    value: $settings.projectSearchDepth,
+                    value: Bindable(settings).projectSearchDepth,
                     in: 2...8
                 )
             }
@@ -214,15 +214,15 @@ struct ScanSettings: View {
 // MARK: - Safety
 
 struct SafetySettings: View {
-    @EnvironmentObject private var environment: AppEnvironment
-    @EnvironmentObject private var settings: AppSettings
+    @Environment(AppEnvironment.self) private var environment
+    @Environment(AppSettings.self) private var settings
 
     var body: some View {
         Form {
             Section("隔离区") {
                 Stepper(
                     "保留天数：\(settings.retentionDays) 天",
-                    value: $settings.retentionDays,
+                    value: Bindable(settings).retentionDays,
                     in: 1...30
                 )
                 Text("移入隔离区的文件在保留期内随时可以还原，到期后才真正删除。改动只影响之后的清理操作。")

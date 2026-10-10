@@ -7,9 +7,9 @@ import MacVitalKit
 /// share a page — and they run independently, so you can record what you are
 /// broadcasting.
 struct RecordPage: View {
-    @EnvironmentObject private var environment: AppEnvironment
-    @EnvironmentObject private var recorder: ScreenRecorder
-    @EnvironmentObject private var live: LiveBroadcaster
+    @Environment(AppEnvironment.self) private var environment
+    @Environment(ScreenRecorder.self) private var recorder
+    @Environment(LiveBroadcaster.self) private var live
     @State private var savedTo: URL?
     @State private var elapsed: TimeInterval = 0
 
@@ -96,7 +96,7 @@ struct RecordPage: View {
                             Text("帧率")
                                 .font(.system(size: 13))
                                 .foregroundStyle(Theme.secondaryLabel)
-                            Picker("", selection: $recorder.frameRate) {
+                            Picker("", selection: Bindable(recorder).frameRate) {
                                 Text("30 fps").tag(30)
                                 Text("60 fps").tag(60)
                             }
@@ -104,7 +104,7 @@ struct RecordPage: View {
                             .labelsHidden()
                             .frame(width: 170)
                         }
-                        Toggle("包含鼠标指针", isOn: $recorder.showsCursor)
+                        Toggle("包含鼠标指针", isOn: Bindable(recorder).showsCursor)
                             .toggleStyle(.switch)
                             .controlSize(.small)
                             .font(.system(size: 13))
@@ -214,7 +214,7 @@ struct RecordPage: View {
                             Text("帧率")
                                 .font(.system(size: 13))
                                 .foregroundStyle(Theme.secondaryLabel)
-                            Picker("", selection: $live.frameRate) {
+                            Picker("", selection: Bindable(live).frameRate) {
                                 Text("8").tag(8)
                                 Text("12").tag(12)
                                 Text("20").tag(20)
@@ -227,7 +227,7 @@ struct RecordPage: View {
                             Text("画质")
                                 .font(.system(size: 13))
                                 .foregroundStyle(Theme.secondaryLabel)
-                            Slider(value: $live.quality, in: 0.3...0.9)
+                            Slider(value: Bindable(live).quality, in: 0.3...0.9)
                                 .frame(width: 130)
                         }
                         Spacer(minLength: 0)

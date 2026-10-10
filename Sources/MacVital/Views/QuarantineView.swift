@@ -7,7 +7,7 @@ import MacVitalKit
 /// later, which is when the question actually gets asked.
 struct QuarantineView: View {
     @Binding var isPresented: Bool
-    @StateObject private var model: QuarantineViewModel
+    @State private var model: QuarantineViewModel
     @State private var confirmPurgeAll = false
 
     /// The environment is passed explicitly rather than read from
@@ -15,7 +15,7 @@ struct QuarantineView: View {
     /// it at `init` time and environment objects are not available that early.
     init(isPresented: Binding<Bool>, environment: AppEnvironment) {
         _isPresented = isPresented
-        _model = StateObject(wrappedValue: QuarantineViewModel(environment: environment))
+        _model = State(initialValue: QuarantineViewModel(environment: environment))
     }
 
     var body: some View {

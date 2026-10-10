@@ -4,17 +4,18 @@ import MacVitalKit
 import SwiftUI
 
 @MainActor
-final class QuarantineViewModel: ObservableObject {
-    @Published private(set) var records: [QuarantineRecord] = []
+@Observable
+final class QuarantineViewModel {
+    private(set) var records: [QuarantineRecord] = []
     /// Containers under `Items/` that no record points at — invisible, never
     /// restorable, never swept. See `QuarantineStore.orphanedContainers`.
-    @Published private(set) var orphans: [QuarantineStore.Orphan] = []
-    @Published var errorMessage: String?
-    @Published private(set) var busyID: UUID?
-    @Published private(set) var isPurgingAll = false
+    private(set) var orphans: [QuarantineStore.Orphan] = []
+    var errorMessage: String?
+    private(set) var busyID: UUID?
+    private(set) var isPurgingAll = false
 
     var isBusy: Bool { busyID != nil || isReaping || isPurgingAll }
-    @Published private(set) var isReaping = false
+    private(set) var isReaping = false
 
     private let environment: AppEnvironment
 

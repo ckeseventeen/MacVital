@@ -2,8 +2,8 @@ import SwiftUI
 import MacVitalKit
 
 struct DashboardPage: View {
-    @EnvironmentObject private var environment: AppEnvironment
-    @EnvironmentObject private var model: ScanViewModel
+    @Environment(AppEnvironment.self) private var environment
+    @Environment(ScanViewModel.self) private var model
 
     var body: some View {
         ScrollView {

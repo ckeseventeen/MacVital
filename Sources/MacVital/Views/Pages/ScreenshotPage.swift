@@ -3,8 +3,8 @@ import AppKit
 import MacVitalKit
 
 struct ScreenshotPage: View {
-    @EnvironmentObject private var environment: AppEnvironment
-    @EnvironmentObject private var shots: ScreenshotService
+    @Environment(AppEnvironment.self) private var environment
+    @Environment(ScreenshotService.self) private var shots
     @State private var mode: ScreenshotService.Mode = .region
     @State private var savedTo: URL?
 
@@ -12,7 +12,7 @@ struct ScreenshotPage: View {
     @State private var tool: AnnotationTool = .arrow
     @State private var colorIndex = 0
     @State private var widthIndex = 1
-    @StateObject private var canvasRef = ScreenshotEditor.CanvasBox()
+    @State private var canvasRef = ScreenshotEditor.CanvasBox()
 
     private var style: AnnotationStyle {
         AnnotationStyle(
@@ -100,7 +100,7 @@ struct ScreenshotPage: View {
             Text("延时")
                 .font(.system(size: 13))
                 .foregroundStyle(Theme.secondaryLabel)
-            Picker("", selection: $shots.delaySeconds) {
+            Picker("", selection: Bindable(shots).delaySeconds) {
                 Text("无").tag(0)
                 Text("3 秒").tag(3)
                 Text("5 秒").tag(5)

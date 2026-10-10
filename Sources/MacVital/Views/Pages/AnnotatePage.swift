@@ -4,11 +4,11 @@ import MacVitalKit
 /// The screen-pen page. Drawing happens in an overlay window above every other
 /// app, so this page is the launcher and the settings panel — not a canvas.
 struct AnnotatePage: View {
-    @EnvironmentObject private var environment: AppEnvironment
+    @Environment(AppEnvironment.self) private var environment
     /// Injected separately from `AppEnvironment`: the pen is its own
     /// `ObservableObject`, and a `let` property on the environment would never
     /// republish when its state changed.
-    @EnvironmentObject private var pen: ScreenPenController
+    @Environment(ScreenPenController.self) private var pen
 
     private let tools: [AnnotationTool] = [.select, .pen, .highlighter, .rectangle, .ellipse, .arrow, .text, .eraser]
 

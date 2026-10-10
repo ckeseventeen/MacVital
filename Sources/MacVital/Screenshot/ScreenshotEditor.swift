@@ -19,9 +19,10 @@ struct ScreenshotEditor: NSViewRepresentable {
     /// A reference cell for the canvas. `NSViewRepresentable` builds the view
     /// on demand and SwiftUI owns its lifetime; this is how the page gets a
     /// handle on it without keeping the view itself in `@State`.
-    final class CanvasBox: ObservableObject {
-        weak var canvas: AnnotationCanvasView?
-        @Published var canUndo = false
+    @Observable
+    final class CanvasBox {
+        @ObservationIgnored weak var canvas: AnnotationCanvasView?
+        var canUndo = false
     }
 
     func makeNSView(context: Context) -> AnnotationCanvasView {

@@ -6,8 +6,8 @@ import MacVitalKit
 /// user granting that is a separate decision from the user selecting files.
 struct ConfirmSheet: View {
     @Binding var isPresented: Bool
-    @EnvironmentObject private var model: ScanViewModel
-    @EnvironmentObject private var environment: AppEnvironment
+    @Environment(ScanViewModel.self) private var model
+    @Environment(AppEnvironment.self) private var environment
 
     private var selected: [Finding] {
         model.findings.filter { model.selection.contains($0.id) }

@@ -2,7 +2,7 @@ import SwiftUI
 import AppKit
 
 struct WhiteboardPage: View {
-    @ObservedObject var model: WhiteboardViewModel
+    @Bindable var model: WhiteboardViewModel
 
     var body: some View {
         VStack(spacing: 0) {
@@ -122,7 +122,7 @@ struct WhiteboardPage: View {
 
 /// Bridges the shared annotation canvas into the whiteboard page.
 private struct WhiteboardCanvas: NSViewRepresentable {
-    @ObservedObject var model: WhiteboardViewModel
+    @Bindable var model: WhiteboardViewModel
 
     func makeNSView(context: Context) -> AnnotationCanvasView {
         let canvas = AnnotationCanvasView()

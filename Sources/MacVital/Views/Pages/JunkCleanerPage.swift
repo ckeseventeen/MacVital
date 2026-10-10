@@ -7,8 +7,8 @@ import MacVitalKit
 /// The findings list itself is unchanged — it is the same `Finding` rows with
 /// the same rule-engine verdicts. Only the frame around it moved.
 struct JunkCleanerPage: View {
-    @EnvironmentObject private var environment: AppEnvironment
-    @EnvironmentObject private var model: ScanViewModel
+    @Environment(AppEnvironment.self) private var environment
+    @Environment(ScanViewModel.self) private var model
     @State private var confirmingSelectAll = false
 
     var body: some View {

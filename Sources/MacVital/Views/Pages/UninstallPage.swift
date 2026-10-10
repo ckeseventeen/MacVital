@@ -5,8 +5,8 @@ import MacVitalKit
 /// five-item navigation. The plan-building and rule evaluation are unchanged —
 /// this is `UninstallViewModel` in a different frame.
 struct UninstallPage: View {
-    @EnvironmentObject private var environment: AppEnvironment
-    @StateObject private var model: UninstallViewModel
+    @Environment(AppEnvironment.self) private var environment
+    @State private var model: UninstallViewModel
     @State private var confirming = false
     /// Raised only after a graceful quit has visibly failed. Force-quitting is
     /// the one action here that can lose unsaved work, so it never happens as a
@@ -17,7 +17,7 @@ struct UninstallPage: View {
     /// `@EnvironmentObject`: the view model must be constructed at `init` time
     /// and environment objects are not available that early.
     init(environment: AppEnvironment) {
-        _model = StateObject(wrappedValue: UninstallViewModel(environment: environment))
+        _model = State(initialValue: UninstallViewModel(environment: environment))
     }
 
     var body: some View {

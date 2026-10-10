@@ -3,7 +3,8 @@ import AppKit
 import MacVitalKit
 
 @MainActor
-final class StartupViewModel: ObservableObject {
+@Observable
+final class StartupViewModel {
     struct Row: Identifiable {
         let item: LoginItem
         let decision: RuleDecision
@@ -44,13 +45,13 @@ final class StartupViewModel: ObservableObject {
         }
     }
 
-    @Published private(set) var rows: [Row] = []
-    @Published var selection: Set<String> = []
-    @Published private(set) var isLoading = false
-    @Published private(set) var isRemoving = false
-    @Published private(set) var summary: String?
-    @Published private(set) var stopMessage: String?
-    @Published var showOnlyOrphaned = false
+    private(set) var rows: [Row] = []
+    var selection: Set<String> = []
+    private(set) var isLoading = false
+    private(set) var isRemoving = false
+    private(set) var summary: String?
+    private(set) var stopMessage: String?
+    var showOnlyOrphaned = false
 
     private let environment: AppEnvironment
 

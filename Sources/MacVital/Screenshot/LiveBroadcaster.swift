@@ -21,18 +21,19 @@ import ScreenCaptureKit
 /// compression) and that is the right trade on a LAN, for the classroom and
 /// meeting-room case this feature is actually for.
 @MainActor
-final class LiveBroadcaster: NSObject, ObservableObject {
+@Observable
+final class LiveBroadcaster: NSObject {
 
-    @Published private(set) var isBroadcasting = false
-    @Published private(set) var isStarting = false
+    private(set) var isBroadcasting = false
+    private(set) var isStarting = false
     private var generation = 0
-    @Published private(set) var viewerCount = 0
-    @Published private(set) var addresses: [String] = []
-    @Published var errorMessage: String?
+    private(set) var viewerCount = 0
+    private(set) var addresses: [String] = []
+    var errorMessage: String?
     /// Lower is smoother, higher costs bandwidth. Screen content tolerates a
     /// low rate far better than video does.
-    @Published var frameRate: Int = 12
-    @Published var quality: Double = 0.6
+    var frameRate: Int = 12
+    var quality: Double = 0.6
 
     let port: UInt16 = 8760
 

@@ -42,26 +42,100 @@ enum AppearanceMode: String, CaseIterable, Identifiable {
 }
 
 @MainActor
-final class AppSettings: ObservableObject {
-    @AppStorage("appearanceMode") var appearanceMode: AppearanceMode = .system
-    @AppStorage("showMenuBarSpeed") var showMenuBarSpeed: Bool = true
-    @AppStorage("showMenuBarPen") var showMenuBarPen: Bool = true
+@Observable
+final class AppSettings {
+    // Stored properties written through to UserDefaults, not `@AppStorage`.
+    //
+    // `@AppStorage` is a view property wrapper. Inside a class it reads and
+    // writes UserDefaults correctly but tells nobody, which made every setting
+    // here quietly half-broken: flip the appearance mode in Settings and the
+    // main window kept its old colour scheme until something unrelated forced
+    // a redraw, because nothing observing this object heard about the change.
+    // The note on `currentRetentionDays` below was already describing this.
+    //
+    // As `@Observable` stored properties every read is tracked and every write
+    // notifies. The keys are byte-for-byte the ones `@AppStorage` used, so
+    // existing users keep their settings.
+    @ObservationIgnored private let defaults: UserDefaults
+
+    var appearanceMode: AppearanceMode {
+        didSet { defaults.set(appearanceMode.rawValue, forKey: Keys.appearanceMode) }
+    }
+    var showMenuBarSpeed: Bool {
+        didSet { defaults.set(showMenuBarSpeed, forKey: Keys.showMenuBarSpeed) }
+    }
+    var showMenuBarPen: Bool {
+        didSet { defaults.set(showMenuBarPen, forKey: Keys.showMenuBarPen) }
+    }
     /// Closing the window leaves the app running instead of quitting it.
     ///
     /// On by default because half of what this app does is background work the
     /// window is not needed for: the menu bar throughput readout, the screen
     /// pen hotkey, and the quarantine sweep. Quitting on window close threw all
     /// of that away every time the user tidied up their desktop.
-    @AppStorage("keepRunningInBackground") var keepRunningInBackground: Bool = true
-    @AppStorage("advisorMode") var advisorMode: AdvisorMode = .offline
-    @AppStorage("localModelEndpoint") var localModelEndpoint: String = "http://127.0.0.1:11434/api/chat"
-    @AppStorage("localModelName") var localModelName: String = "qwen2.5:3b"
-    @AppStorage(AppSettings.retentionDaysKey) var retentionDays: Int = QuarantineStore.defaultRetentionDays
-    @AppStorage("largeFileThresholdMB") var largeFileThresholdMB: Int = 256
-    @AppStorage("projectSearchDepth") var projectSearchDepth: Int = 5
-    @AppStorage("projectRootsRaw") private var projectRootsRaw: String = ""
+    var keepRunningInBackground: Bool {
+        didSet { defaults.set(keepRunningInBackground, forKey: Keys.keepRunningInBackground) }
+    }
+    var advisorMode: AdvisorMode {
+        didSet { defaults.set(advisorMode.rawValue, forKey: Keys.advisorMode) }
+    }
+    var localModelEndpoint: String {
+        didSet { defaults.set(localModelEndpoint, forKey: Keys.localModelEndpoint) }
+    }
+    var localModelName: String {
+        didSet { defaults.set(localModelName, forKey: Keys.localModelName) }
+    }
+    var retentionDays: Int {
+        didSet { defaults.set(retentionDays, forKey: AppSettings.retentionDaysKey) }
+    }
+    var largeFileThresholdMB: Int {
+        didSet { defaults.set(largeFileThresholdMB, forKey: Keys.largeFileThresholdMB) }
+    }
+    var projectSearchDepth: Int {
+        didSet { defaults.set(projectSearchDepth, forKey: Keys.projectSearchDepth) }
+    }
+    private var projectRootsRaw: String {
+        didSet { defaults.set(projectRootsRaw, forKey: Keys.projectRootsRaw) }
+    }
 
-    @Published var hasCloudKey: Bool = KeychainStore.has(.anthropicAPIKey)
+    var hasCloudKey: Bool
+
+    private enum Keys {
+        static let appearanceMode = "appearanceMode"
+        static let showMenuBarSpeed = "showMenuBarSpeed"
+        static let showMenuBarPen = "showMenuBarPen"
+        static let keepRunningInBackground = "keepRunningInBackground"
+        static let advisorMode = "advisorMode"
+        static let localModelEndpoint = "localModelEndpoint"
+        static let localModelName = "localModelName"
+        static let largeFileThresholdMB = "largeFileThresholdMB"
+        static let projectSearchDepth = "projectSearchDepth"
+        static let projectRootsRaw = "projectRootsRaw"
+    }
+
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+
+        // `object(forKey:) as? T` rather than `bool(forKey:)` / `integer(forKey:)`:
+        // those return false / 0 for a key that was never written, which would
+        // silently replace every default with its zero value on first launch.
+        appearanceMode = defaults.string(forKey: Keys.appearanceMode)
+            .flatMap(AppearanceMode.init(rawValue:)) ?? .system
+        showMenuBarSpeed = defaults.object(forKey: Keys.showMenuBarSpeed) as? Bool ?? true
+        showMenuBarPen = defaults.object(forKey: Keys.showMenuBarPen) as? Bool ?? true
+        keepRunningInBackground = defaults.object(forKey: Keys.keepRunningInBackground) as? Bool ?? true
+        advisorMode = defaults.string(forKey: Keys.advisorMode)
+            .flatMap(AdvisorMode.init(rawValue:)) ?? .offline
+        localModelEndpoint = defaults.string(forKey: Keys.localModelEndpoint)
+            ?? "http://127.0.0.1:11434/api/chat"
+        localModelName = defaults.string(forKey: Keys.localModelName) ?? "qwen2.5:3b"
+        retentionDays = defaults.object(forKey: AppSettings.retentionDaysKey) as? Int
+            ?? QuarantineStore.defaultRetentionDays
+        largeFileThresholdMB = defaults.object(forKey: Keys.largeFileThresholdMB) as? Int ?? 256
+        projectSearchDepth = defaults.object(forKey: Keys.projectSearchDepth) as? Int ?? 5
+        projectRootsRaw = defaults.string(forKey: Keys.projectRootsRaw) ?? ""
+        hasCloudKey = KeychainStore.has(.anthropicAPIKey)
+    }
 
     nonisolated static let retentionDaysKey = "retentionDays"
 
@@ -69,10 +143,9 @@ final class AppSettings: ObservableObject {
     ///
     /// `QuarantineStore` is an actor and stamps an expiry at the moment an item
     /// moves in, so it needs the value that is set *then* — not the one that
-    /// happened to be set when `AppSettings` was constructed. `@AppStorage`
-    /// inside an `ObservableObject` publishes nothing, so there is no
-    /// notification to subscribe to either; reading the backing store directly
-    /// is both the simplest and the only reliably current answer.
+    /// happened to be set when `AppSettings` was constructed. This class is
+    /// main-actor isolated and the store is not, so it reads the backing
+    /// UserDefaults directly — which `retentionDays` writes through to.
     nonisolated static func currentRetentionDays() -> Int {
         let stored = UserDefaults.standard.integer(forKey: retentionDaysKey)
         guard stored > 0 else { return QuarantineStore.defaultRetentionDays }

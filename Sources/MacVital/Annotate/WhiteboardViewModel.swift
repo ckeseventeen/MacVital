@@ -7,7 +7,8 @@ import UniformTypeIdentifiers
 /// the same `AnnotationCanvasView` used by the screen overlay and the
 /// screenshot editor — the whiteboard is that canvas over a blank page.
 @MainActor
-final class WhiteboardViewModel: ObservableObject {
+@Observable
+final class WhiteboardViewModel {
     struct Board: Identifiable {
         let id = UUID()
         var name: String
@@ -15,15 +16,15 @@ final class WhiteboardViewModel: ObservableObject {
         var image: NSImage?
     }
 
-    @Published private(set) var boards: [Board] = [Board(name: "白板 1")]
-    @Published private(set) var currentIndex = 0
-    @Published var tool: AnnotationTool = .pen
-    @Published var colorIndex = 6   // near-black reads best on white
-    @Published var widthIndex = 1
-    @Published var errorMessage: String?
-    @Published private(set) var canUndo = false
+    private(set) var boards: [Board] = [Board(name: "白板 1")]
+    private(set) var currentIndex = 0
+    var tool: AnnotationTool = .pen
+    var colorIndex = 6   // near-black reads best on white
+    var widthIndex = 1
+    var errorMessage: String?
+    private(set) var canUndo = false
 
-    weak var canvas: AnnotationCanvasView?
+    @ObservationIgnored weak var canvas: AnnotationCanvasView?
 
     var current: Board { boards[currentIndex] }
 

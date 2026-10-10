@@ -9,7 +9,8 @@ import MacVitalKit
 /// would be a worse version of something every Mac user already knows, and the
 /// app is not sandboxed, so spawning it is available to us.
 @MainActor
-final class ScreenshotService: ObservableObject {
+@Observable
+final class ScreenshotService {
 
     enum Mode: String, CaseIterable, Identifiable {
         case region
@@ -61,13 +62,13 @@ final class ScreenshotService: ObservableObject {
         var takenAt: Date
     }
 
-    @Published private(set) var latest: Capture?
-    @Published private(set) var isCapturing = false
-    @Published private(set) var errorMessage: String?
+    private(set) var latest: Capture?
+    private(set) var isCapturing = false
+    private(set) var errorMessage: String?
     /// Whether `errorMessage` is the Screen Recording one, so the alert can
     /// offer the settings pane that actually fixes it.
-    @Published private(set) var errorNeedsScreenRecording = false
-    @Published var delaySeconds: Int = 0
+    private(set) var errorNeedsScreenRecording = false
+    var delaySeconds: Int = 0
 
     private let scratch: URL = FileManager.default.temporaryDirectory
         .appendingPathComponent("MacVital-Screenshots", isDirectory: true)
