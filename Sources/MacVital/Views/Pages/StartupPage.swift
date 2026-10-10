@@ -11,6 +11,7 @@ struct StartupPage: View {
     @Environment(AppEnvironment.self) private var environment
     @State private var model: StartupViewModel
     @State private var confirming = false
+    @State private var searchText = ""
     /// The row whose process refused a graceful quit. Set only after one has
     /// been tried and failed.
     @State private var forceTarget: StartupViewModel.Row?
@@ -21,36 +22,14 @@ struct StartupPage: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: 18) {
-                PageHeader(title: "开机启动项", subtitle: subtitle, systemImage: "power") {
-                    Button("刷新") { Task { await model.reload() } }
-                        .buttonStyle(.bordered)
-                        .disabled(model.isLoading)
-                }
-                controls
-                blockedNotice
-            }
-            .padding(.horizontal, Theme.Metric.pagePaddingH)
-            .padding(.top, Theme.Metric.pagePaddingV)
-            .padding(.bottom, 18)
-
-            Divider().overlay(Theme.separator)
-
-            if model.isLoading {
-                Spacer()
-                ProgressView("正在读取启动项…").controlSize(.small)
-                Spacer()
-            } else if model.visibleRows.isEmpty {
-                Spacer()
-                emptyState
-                Spacer()
-            } else {
-                list
-            }
-
-            Divider().overlay(Theme.separator)
+            blockedNotice
+            content
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             footer
         }
+        .navigationSubtitle(subtitle)
+        .searchable(text: $searchText, placement: .toolbar, prompt: "搜索启动项")
+        .toolbar { toolbar }
         .task { await model.reload() }
         // No error alert here on purpose. There used to be one bound to an
         // `errorMessage` that nothing ever assigned — a modal that could not
@@ -90,86 +69,96 @@ struct StartupPage: View {
 
     private var subtitle: String {
         if model.isLoading { return "正在读取…" }
-        let total = model.rows.count
-        return model.orphanCount > 0
-            ? "\(total) 项 · 其中 \(model.orphanCount) 项指向的程序已不存在"
-            : "\(total) 项 · 没有发现失效条目"
+        var parts = ["\(model.rows.count) 项"]
+        if model.orphanCount > 0 { parts.append("\(model.orphanCount) 项已失效") }
+        parts.append("已排除 Apple 系统服务")
+        return parts.joined(separator: " · ")
+    }
+
+    // MARK: - Toolbar
+
+    @ToolbarContentBuilder
+    private var toolbar: some ToolbarContent {
+        ToolbarItemGroup {
+            Toggle(isOn: $model.showOnlyOrphaned) {
+                Label("只看失效的", systemImage: "exclamationmark.triangle")
+            }
+            .help("只显示指向的程序已不存在的启动项")
+
+            Button {
+                Task { await model.reload() }
+            } label: {
+                Label("刷新", systemImage: "arrow.clockwise")
+            }
+            .help("重新读取启动项")
+            .disabled(model.isLoading)
+        }
+    }
+
+    // MARK: - Content
+
+    @ViewBuilder
+    private var content: some View {
+        if model.isLoading && model.rows.isEmpty {
+            ProgressView("正在读取启动项…")
+                .controlSize(.small)
+        } else if model.visibleRows.isEmpty {
+            ContentUnavailableView {
+                Label(model.showOnlyOrphaned ? "没有失效的启动项" : "没有第三方启动项",
+                      systemImage: "power")
+            } description: {
+                Text("这台机器上没有需要处理的开机启动配置。")
+            }
+        } else if displayedRows.isEmpty {
+            ContentUnavailableView.search(text: searchText)
+        } else {
+            list
+        }
+    }
+
+    private var displayedRows: [StartupViewModel.Row] {
+        let query = searchText.trimmingCharacters(in: .whitespaces)
+        guard !query.isEmpty else { return model.visibleRows }
+        return model.visibleRows.filter { row in
+            row.item.displayName.localizedStandardContains(query)
+                || row.item.label.localizedStandardContains(query)
+                || (row.item.program?.localizedStandardContains(query) ?? false)
+        }
     }
 
     /// Says once, in the open, what the rows can only say in a tooltip.
     @ViewBuilder
     private var blockedNotice: some View {
         if let reason = model.uniformBlocker {
-            HStack(alignment: .top, spacing: 9) {
+            HStack(alignment: .firstTextBaseline, spacing: 9) {
                 Image(systemName: "lock.circle.fill")
-                    .font(.system(size: 14))
                     .foregroundStyle(Theme.junk)
-                VStack(alignment: .leading, spacing: 5) {
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 4) {
                     Text("这些条目都不能在当前构建里操作")
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(Theme.label)
+                        .font(.body.weight(.medium))
                     Text(reason)
-                        .font(.system(size: 12))
-                        .foregroundStyle(Theme.secondaryLabel)
-                        .fixedSize(horizontal: false, vertical: true)
+                        .foregroundStyle(.secondary)
                     // The door. Finder can write where this app cannot — it
                     // asks for an administrator password and does it — and
                     // without saying so the page is a wall with no way past.
                     Text("访达可以：把 plist 拖进废纸篓时系统会要一次密码。"
                          + "代价是它进的是废纸篓而不是隔离区，没有一键还原。")
-                        .font(.system(size: 12))
-                        .foregroundStyle(Theme.secondaryLabel)
-                        .fixedSize(horizontal: false, vertical: true)
+                        .foregroundStyle(.secondary)
                     Button("在访达中打开该目录") { model.revealBlockedDirectory() }
                         .buttonStyle(.link)
-                        .font(.system(size: 12))
                         .padding(.top, 1)
                 }
+                .font(.callout)
                 Spacer(minLength: 0)
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 11)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Theme.junk.opacity(0.10), in: RoundedRectangle(cornerRadius: Theme.Radius.tile, style: .continuous))
-        }
-    }
-
-    // MARK: - Controls
-
-    private var controls: some View {
-        HStack(spacing: 12) {
-            Toggle("只看失效的", isOn: $model.showOnlyOrphaned)
-                .toggleStyle(.switch)
-                .controlSize(.small)
-                .font(.system(size: 13))
-
-            if model.orphanCount > 0 {
-                Button("选中全部失效项") { model.selectOrphaned() }
-                    .buttonStyle(.link)
-                    .font(.system(size: 13))
-            }
-            Button("全不选") { model.deselectAll() }
-                .buttonStyle(.link)
-                .font(.system(size: 13))
-                .disabled(model.selection.isEmpty)
-
-            Spacer()
-
-            Label("Apple 自带的系统服务已排除", systemImage: "info.circle")
-                .font(.system(size: 12))
-                .foregroundStyle(Theme.tertiaryLabel)
-        }
-    }
-
-    private var emptyState: some View {
-        VStack(spacing: 12) {
-            GlyphTile(systemImage: "power", tint: Theme.success, size: 48)
-            Text(model.showOnlyOrphaned ? "没有失效的启动项" : "没有第三方启动项")
-                .font(.system(size: 16, weight: .medium))
-                .foregroundStyle(Theme.label)
-            Text("这台机器上没有需要处理的开机启动配置。")
-                .font(.system(size: 13))
-                .foregroundStyle(Theme.secondaryLabel)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 10)
+            // Sentences take the width they are given and never ask for more
+            // — see `permissionBannerInset`.
+            .frame(minWidth: 0, idealWidth: 0, maxWidth: .infinity, alignment: .leading)
+            .background(Theme.junk.opacity(0.09))
+            Divider()
         }
     }
 
@@ -197,21 +186,13 @@ struct StartupPage: View {
                 } header: {
                     HStack(spacing: 8) {
                         Text(group.scope.title)
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundStyle(Theme.label)
                         if group.scope.requiresPrivilege {
-                            Text("需要管理员授权")
-                                .font(.system(size: 11))
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 1)
-                                .background(Theme.junk.opacity(0.14), in: Capsule())
-                                .foregroundStyle(Theme.junk)
+                            Tag("需要管理员授权", tint: Theme.junk)
                         }
                         Spacer()
                         Text("\(group.rows.count)")
-                            .font(.system(size: 12))
                             .monospacedDigit()
-                            .foregroundStyle(Theme.secondaryLabel)
+                            .foregroundStyle(.secondary)
                     }
                     .textCase(nil)
                 }
@@ -222,8 +203,9 @@ struct StartupPage: View {
     }
 
     private var groupedRows: [(scope: LoginItem.Scope, rows: [StartupViewModel.Row])] {
-        [LoginItem.Scope.userAgent, .systemAgent, .daemon].compactMap { scope in
-            let matching = model.visibleRows.filter { $0.item.scope == scope }
+        let rows = displayedRows
+        return [LoginItem.Scope.userAgent, .systemAgent, .daemon].compactMap { scope in
+            let matching = rows.filter { $0.item.scope == scope }
             return matching.isEmpty ? nil : (scope: scope, rows: matching)
         }
     }
@@ -231,46 +213,84 @@ struct StartupPage: View {
     // MARK: - Footer
 
     private var footer: some View {
-        HStack(spacing: 12) {
-            if let summary = model.summary {
-                Label(summary, systemImage: "checkmark.circle")
-                    .font(.system(size: 12))
-                    .foregroundStyle(Theme.secondaryLabel)
-                    .lineLimit(3)
-            } else if model.needsHelper {
-                Label("含系统级项目，需要先安装特权助手", systemImage: "key.fill")
-                    .font(.system(size: 12))
-                    .foregroundStyle(Theme.junk)
-            } else {
-                Text("停用 = 把配置移入隔离区，不是删除，可还原")
-                    .font(.system(size: 13))
-                    .foregroundStyle(Theme.secondaryLabel)
-            }
-
-            Spacer()
-
-            Text("已选 \(model.selection.count) 项")
-                .font(.system(size: 13))
-                .monospacedDigit()
-                .foregroundStyle(Theme.secondaryLabel)
-
-            Button {
-                confirming = true
-            } label: {
-                if model.isRemoving {
-                    ProgressView().controlSize(.small)
-                } else {
-                    Text("停用").font(.system(size: 14, weight: .medium)).padding(.horizontal, 8)
+        VStack(spacing: 0) {
+            Divider()
+            if model.summary != nil || model.needsHelper {
+                Group {
+                    if let summary = model.summary {
+                        Label(summary, systemImage: "checkmark.circle")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Label("含系统级项目，需要先安装特权助手", systemImage: "key.fill")
+                            .foregroundStyle(Theme.junk)
+                    }
                 }
+                .font(.callout)
+                .frame(minWidth: 0, idealWidth: 0, maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+                Divider()
             }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
-            .tint(Theme.junk)
-            .disabled(model.selection.isEmpty || model.isRemoving)
+            HStack(spacing: 14) {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("已选 \(model.selection.count) 项")
+                        .font(.headline)
+                        .monospacedDigit()
+                    Text("停用 = 把配置移入隔离区，不是删除，可还原")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                Menu("选择") {
+                    Button("选中全部失效项") { model.selectOrphaned() }
+                        .disabled(model.orphanCount == 0)
+                    Button("全不选") { model.deselectAll() }
+                        .disabled(model.selection.isEmpty)
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .disabled(model.rows.isEmpty || model.isRemoving)
+
+                Button {
+                    confirming = true
+                } label: {
+                    if model.isRemoving {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Text("停用…")
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .keyboardShortcut(.return, modifiers: .command)
+                .disabled(model.selection.isEmpty || model.isRemoving)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
         }
-        .padding(.horizontal, Theme.Metric.pagePaddingH)
-        .padding(.vertical, Theme.Metric.barPaddingV)
-        .glassChrome()
+        .background(.bar)
+    }
+}
+
+/// A small tinted capsule — state words beside a name.
+private struct Tag: View {
+    let text: String
+    let tint: Color
+
+    init(_ text: String, tint: Color) {
+        self.text = text
+        self.tint = tint
+    }
+
+    var body: some View {
+        Text(text)
+            .font(.caption)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 1)
+            .background(tint.opacity(0.14), in: Capsule())
+            .foregroundStyle(tint)
     }
 }
 
@@ -296,7 +316,7 @@ private struct LoginItemIcon: View {
 
             if item.isOrphaned {
                 Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: 11))
+                    .font(.caption)
                     .foregroundStyle(.white, Theme.junk)
                     .background(Circle().fill(Theme.surface).frame(width: 13, height: 13))
                     .offset(x: 3, y: 3)
@@ -322,35 +342,25 @@ private struct StartupRow: View {
                 .toggleStyle(.checkbox)
                 .disabled(!row.isSelectable)
                 .help(row.isSelectable ? "" : row.decision.rationale)
+                .accessibilityLabel("停用 \(row.item.displayName)")
 
             LoginItemIcon(item: row.item)
 
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(row.item.displayName)
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundStyle(Theme.label)
+                        .font(.body.weight(.medium))
                         .lineLimit(1)
                     if row.item.isOrphaned {
-                        Text("程序已不存在")
-                            .font(.system(size: 11))
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 1)
-                            .background(Theme.junk.opacity(0.14), in: Capsule())
-                            .foregroundStyle(Theme.junk)
+                        Tag("程序已不存在", tint: Theme.junk)
                     }
                     if row.item.keepAlive {
-                        Text("常驻")
-                            .font(.system(size: 11))
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 1)
-                            .background(Theme.well, in: Capsule())
-                            .foregroundStyle(Theme.secondaryLabel)
+                        Tag("常驻", tint: .secondary)
                     }
                 }
                 Text(row.item.program.map { PathRedaction.abbreviate($0) } ?? row.item.label)
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundStyle(Theme.tertiaryLabel)
+                    .font(.subheadline)
+                    .foregroundStyle(.tertiary)
                     .lineLimit(1)
                     .truncationMode(.middle)
             }
@@ -368,8 +378,8 @@ private struct StartupRow: View {
                     .help("结束正在运行的进程。这不影响它下次登录是否启动。")
             } else if row.running != nil, row.stoppingWouldNotStick {
                 Text("常驻，需重新登录")
-                    .font(.system(size: 11))
-                    .foregroundStyle(Theme.tertiaryLabel)
+                    .font(.subheadline)
+                    .foregroundStyle(.tertiary)
                     .help("launchd 会立刻重新启动它，所以现在结束它没有意义。"
                           + "停用之后重新登录，它才不会再起来。")
             }
@@ -377,7 +387,7 @@ private struct StartupRow: View {
             if !row.isSelectable {
                 Button("访达", action: reveal)
                     .buttonStyle(.link)
-                    .font(.system(size: 12))
+                    .font(.callout)
                     .help("在访达中显示这个 plist。把它拖进废纸篓时系统会要一次密码。")
             }
 
