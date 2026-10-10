@@ -7,6 +7,7 @@ struct RootView: View {
     @Environment(AppEnvironment.self) private var environment
     @Environment(ScanViewModel.self) private var model
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.undoManager) private var undoManager
 
     var body: some View {
         // The page title is set inside the split view's detail column, where
@@ -28,6 +29,31 @@ struct RootView: View {
             }
             .sheet(isPresented: Bindable(environment).showQuarantine) {
                 QuarantineView(isPresented: Bindable(environment).showQuarantine, environment: environment)
+            }
+            // 编辑 › 撤销「移入隔离区」, the way every Mac app offers to take
+            // back the last thing it did. Registered on the window's undo
+            // manager, so ⌘Z and the menu item come from the system.
+            .onChange(of: model.lastCleanup?.id) { _, id in
+                guard id != nil, let undoManager else { return }
+                undoManager.registerUndo(withTarget: model) { model in
+                    Task { @MainActor in await model.undoLastCleanup() }
+                }
+                undoManager.setActionName("移入隔离区")
+            }
+            .alert(
+                "部分项目未能还原",
+                isPresented: Binding(
+                    get: { model.undoReport != nil },
+                    set: { if !$0 { model.undoReport = nil } }
+                )
+            ) {
+                Button("查看隔离区") {
+                    model.undoReport = nil
+                    environment.showQuarantine = true
+                }
+                Button("好", role: .cancel) { model.undoReport = nil }
+            } message: {
+                Text((model.undoReport ?? "") + "\n\n它们还在隔离区里，可以稍后手动还原。")
             }
             .alert(
                 "扫描出错",
@@ -228,13 +254,13 @@ private struct BannerNote: View {
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
             Image(systemName: icon)
-                .font(.system(size: 10))
+                .font(.caption)
+                .accessibilityHidden(true)
             Text(text)
-                .font(.system(size: 11))
-                .fixedSize(horizontal: false, vertical: true)
+                .font(.subheadline)
             Spacer(minLength: 0)
         }
-        .foregroundStyle(Theme.secondaryLabel)
+        .foregroundStyle(.secondary)
         .padding(.leading, 25)
     }
 }
@@ -246,28 +272,28 @@ struct CleanupSummaryView: View {
     let summary: ScanViewModel.CleanupSummary
     @Environment(ScanViewModel.self) private var model
     @Environment(AppEnvironment.self) private var environment
+    @Environment(\.undoManager) private var undoManager
     @State private var showSkipped = false
 
     var body: some View {
         VStack(spacing: 15) {
             Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 46))
+                .font(.system(size: 52))
+                .symbolRenderingMode(.palette)
                 .foregroundStyle(.white, Theme.success)
-                .background(Circle().fill(Theme.success.opacity(0.15)).frame(width: 74, height: 74))
-                .padding(.bottom, 8)
+                .accessibilityHidden(true)
+                .padding(.bottom, 4)
 
             Text("已移入隔离区 \(ByteFormat.string(summary.quarantinedBytes))")
-                .font(.system(size: 27, weight: .medium))
+                .font(.largeTitle.weight(.semibold))
                 .monospacedDigit()
-                .foregroundStyle(Theme.label)
 
             // Says "N 天后释放", not "已回收". The quarantine store is on the
             // same volume, so nothing has been given back yet — and a user who
             // checks their free space right now will find it unchanged.
             Text("\(summary.removedCount) 项。隔离区在同一块磁盘上，"
                  + "\(environment.settings.retentionDays) 天后自动删除，届时才会真正释放空间。")
-                .font(.system(size: 13))
-                .foregroundStyle(Theme.secondaryLabel)
+                .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: 420)
@@ -277,8 +303,8 @@ struct CleanupSummaryView: View {
                     VStack(alignment: .leading, spacing: 5) {
                         ForEach(summary.skipped, id: \.self) { line in
                             Text(line)
-                                .font(.system(size: 12))
-                                .foregroundStyle(Theme.secondaryLabel)
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
                                 .textSelection(.enabled)
                         }
                     }
@@ -286,20 +312,28 @@ struct CleanupSummaryView: View {
                     .padding(.top, 6)
                 } label: {
                     Label("\(summary.skipped.count) 项被跳过", systemImage: "exclamationmark.triangle")
-                        .font(.system(size: 13))
                 }
                 .frame(maxWidth: 420)
             }
 
             HStack(spacing: 10) {
+                Button(model.isUndoing ? "正在还原…" : "撤销") {
+                    // Taken here rather than through ⌘Z, so the menu item
+                    // registered for it would undo nothing.
+                    undoManager?.removeAllActions(withTarget: model)
+                    Task { await model.undoLastCleanup() }
+                }
+                .help("把这次移入隔离区的文件放回原处（⌘Z）")
+                .disabled(model.lastCleanup == nil || model.isUndoing)
                 Button("查看隔离区") { environment.showQuarantine = true }
                 Button("完成") { model.dismissSummary() }
                     .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
             }
+            .controlSize(.large)
             .padding(.top, 4)
         }
         .padding(32)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Theme.surface)
     }
 }

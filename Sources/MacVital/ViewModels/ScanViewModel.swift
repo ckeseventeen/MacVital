@@ -34,6 +34,18 @@ final class ScanViewModel {
     var errorMessage: String?
     private(set) var cleanupProgress: (done: Int, total: Int) = (0, 0)
 
+    /// The most recent cleanup, kept so it can be undone.
+    struct LastCleanup {
+        let id = UUID()
+        let records: [QuarantineRecord]
+        /// The rows those records came from, to put back in the list.
+        let findings: [Finding]
+    }
+    private(set) var lastCleanup: LastCleanup?
+    private(set) var isUndoing = false
+    /// What an undo could not put back. `nil` when everything went back.
+    var undoReport: String?
+
     private let environment: AppEnvironment
     private var scanTask: Task<Void, Never>?
     /// Incremented on every `startScan`. A scan that was superseded while it
@@ -267,6 +279,12 @@ final class ScanViewModel {
         let removedPaths = Set(outcome.removed.map(\.originalPath))
         findings.removeAll { removedPaths.contains($0.item.path) }
         selection = []
+        if !outcome.removed.isEmpty {
+            lastCleanup = LastCleanup(
+                records: outcome.removed,
+                findings: snapshot.filter { removedPaths.contains($0.item.path) }
+            )
+        }
 
         await environment.refreshQuarantine()
         // The quarantine total just changed and the dashboard shows it. Free
@@ -284,5 +302,39 @@ final class ScanViewModel {
 
     func dismissSummary() {
         phase = findings.isEmpty ? .idle : .results
+    }
+
+    /// Put the last cleanup back — ⌘Z, or the button on the summary.
+    ///
+    /// Every record goes through the ordinary restore (see
+    /// `CleanupCoordinator.undo`), so nothing is overwritten and anything that
+    /// cannot go back stays in the quarantine. The rows return to the list
+    /// unticked: putting a file back is not the user asking for it to be
+    /// removed again, and the tick is their authorisation.
+    func undoLastCleanup() async {
+        guard let last = lastCleanup, !isUndoing, !isCleaning else { return }
+        isUndoing = true
+        defer { isUndoing = false }
+        lastCleanup = nil
+
+        let outcome = await environment.coordinator.undo(last.records)
+
+        // A scan in flight is rebuilding the list; let it find them itself.
+        if !isScanning {
+            let restored = Set(outcome.restored.map(\.originalPath))
+            let present = Set(findings.map(\.item.path))
+            findings += last.findings.filter {
+                restored.contains($0.item.path) && !present.contains($0.item.path)
+            }
+            phase = findings.isEmpty ? .idle : .results
+        }
+        await environment.refreshQuarantine()
+        environment.refreshDiskSpace()
+
+        if !outcome.failed.isEmpty {
+            undoReport = outcome.failed
+                .map { "\($0.record.displayName)：\($0.reason)" }
+                .joined(separator: "\n")
+        }
     }
 }

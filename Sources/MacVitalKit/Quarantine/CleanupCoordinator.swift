@@ -18,6 +18,16 @@ public struct CleanupOutcome: Sendable {
     }
 }
 
+/// What undoing a cleanup put back, and what it could not.
+public struct UndoOutcome: Sendable {
+    public var restored: [QuarantineRecord] = []
+    /// No longer in the quarantine: the user restored or deleted it by hand.
+    public var alreadyHandled: [QuarantineRecord] = []
+    public var failed: [(record: QuarantineRecord, reason: String)] = []
+
+    public init() {}
+}
+
 /// Where the three inputs actually meet.
 ///
 /// The engine already ran once at scan time, but that verdict is a snapshot.
@@ -111,6 +121,35 @@ public struct CleanupCoordinator: Sendable {
 
         progress(targets.count, targets.count, "")
         return CleanupOutcome(removed: removed, skipped: skipped, quarantinedBytes: quarantined)
+    }
+
+    // MARK: - Undo
+
+    /// Put a cleanup's records back.
+    ///
+    /// No new way of moving files: every record goes through `restore`, with
+    /// everything that carries — the record has to still be in the store, its
+    /// payload has to still be there, and an original path that something new
+    /// now occupies aborts that one record rather than being overwritten.
+    ///
+    /// Newest first, because that is what undo means. If a cleanup moved a
+    /// file and then the folder that held it, restoring the file first would
+    /// recreate the folder and leave the original one with nowhere to go.
+    public func undo(_ records: [QuarantineRecord]) async -> UndoOutcome {
+        var outcome = UndoOutcome()
+        for record in records.reversed() {
+            do {
+                try await restore(record)
+                outcome.restored.append(record)
+            } catch QuarantineError.recordNotFound {
+                // Restored or deleted from the quarantine sheet since. The
+                // user already decided about this one; it is not a failure.
+                outcome.alreadyHandled.append(record)
+            } catch {
+                outcome.failed.append((record: record, reason: error.localizedDescription))
+            }
+        }
+        return outcome
     }
 
     // MARK: - Quarantine management
