@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import Combine
 import MacVitalKit
 
 /// Recording and LAN broadcast. Both are ScreenCaptureKit sessions, so they
