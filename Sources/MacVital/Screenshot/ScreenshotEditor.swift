@@ -113,7 +113,7 @@ struct AnnotationToolbar: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
-        .glassPanel(cornerRadius: Theme.Radius.tile)
+        .floatingGlass(cornerRadius: Theme.Radius.tile)
     }
 
     private func toolButton(_ candidate: AnnotationTool) -> some View {

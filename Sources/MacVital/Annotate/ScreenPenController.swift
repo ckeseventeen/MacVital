@@ -321,7 +321,7 @@ private struct PenPalette: View {
         }
         .padding(.horizontal, 16)
         .frame(height: 62)
-        .glassPanel(cornerRadius: 20)
+        .floatingGlass(cornerRadius: 20)
     }
 
     private var toolGroup: some View {

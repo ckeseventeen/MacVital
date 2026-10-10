@@ -41,96 +41,77 @@ enum AppPage: String, CaseIterable, Identifiable {
     }
 }
 
-/// Fixed-width sidebar plus content pane, replacing `NavigationSplitView`.
+/// The window: a native sidebar and a detail column.
 ///
-/// The split view could not produce the spec's layout: it owns its own sidebar
-/// chrome, its width is user-draggable, and it has no place for a pinned
-/// storage readout at the bottom. This is a plain `HStack`, which is all the
-/// design actually needs.
+/// This was a hand-built `HStack` that had replaced `NavigationSplitView`, for
+/// three stated reasons. Each has a native answer, and the hand-built version
+/// was paying for not using them:
+///
+/// * **"It owns its own sidebar chrome."** That is the point of it. The
+///   sidebar material, the selection highlight, ⌃⌘S to collapse, arrow-key
+///   navigation and VoiceOver's sidebar rotor all come with it. The custom
+///   version reimplemented the look and none of the behaviour.
+/// * **"Its width is user-draggable."** `navigationSplitViewColumnWidth`
+///   bounds it.
+/// * **"It has no place for a pinned storage readout."** `safeAreaInset` on
+///   the sidebar list — how Music and Mail pin their own footers.
 struct AppShell: View {
     @Environment(AppEnvironment.self) private var environment
     @Environment(ScanViewModel.self) private var model
 
+    /// The page this window was last showing, restored at launch the way
+    /// Finder and System Settings come back to where you left them.
+    @SceneStorage("selectedPage") private var savedPage: AppPage = .dashboard
+
     var body: some View {
-        HStack(spacing: 0) {
+        NavigationSplitView {
             sidebar
-            Rectangle()
-                .fill(Theme.separator)
-                .frame(width: 1)
-            content
+                .navigationSplitViewColumnWidth(min: 190, ideal: 210, max: 280)
+        } detail: {
+            detail
         }
-        .background(Theme.canvas)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onAppear { environment.page = savedPage }
+        .onChange(of: environment.page) { _, page in savedPage = page }
     }
 
     // MARK: - Sidebar
 
     private var sidebar: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            logo
-            nav
-            Spacer(minLength: 12)
-            storage
+        List(selection: selection) {
+            row(.dashboard)
+            Section("维护") {
+                row(.junk)
+                row(.uninstall)
+                row(.startup)
+            }
+            Section("捕获") {
+                row(.screenshot)
+                row(.record)
+            }
+            Section("创作") {
+                row(.annotate)
+                row(.whiteboard)
+            }
         }
-        .frame(width: Theme.Metric.sidebarWidth)
-        .glassChrome()
-    }
-
-    private var logo: some View {
-        HStack(spacing: 9) {
-            // The real app icon, not an impression of it.
-            //
-            // This was `internaldrive.fill` on a flat `Theme.accent` square: a
-            // different glyph from the one the icon draws, on a different blue,
-            // with a different corner radius. Nobody had to get it wrong for
-            // them to diverge — the icon was redrawn and this stayed where it
-            // was, which is what a hand-built copy of another asset always
-            // eventually does. Reading the icon means it cannot drift again.
-            Image(nsImage: NSApp.applicationIconImage)
-                .resizable()
-                .interpolation(.high)
-                .frame(width: 32, height: 32)
-                .accessibilityHidden(true)
-            Text("PureMark")
-                .font(.system(size: 17, weight: .medium))
-                .foregroundStyle(Theme.label)
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, 18)
-        .padding(.top, 20)
-        .padding(.bottom, 24)
-    }
-
-    private var nav: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            navRow(.dashboard)
-            navSection("维护", pages: [.junk, .uninstall, .startup])
-            navSection("捕获", pages: [.screenshot, .record])
-            navSection("创作", pages: [.annotate, .whiteboard])
-        }
-        .padding(.horizontal, 12)
-    }
-
-    private func navSection(_ title: String, pages: [AppPage]) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(title)
-                .font(.system(size: 11, weight: .semibold))
-                .tracking(0.7)
-                .foregroundStyle(Theme.tertiaryLabel)
-                .padding(.leading, 11)
-                .accessibilityAddTraits(.isHeader)
-            ForEach(pages) { navRow($0) }
+        .listStyle(.sidebar)
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            StorageFooter()
         }
     }
 
-    private func navRow(_ page: AppPage) -> some View {
-        NavRow(
-            page: page,
-            isActive: environment.page == page,
-            badge: badge(for: page)
-        ) {
-            environment.page = page
-        }
+    /// `List` selection is optional; the app always has a page. Clicking empty
+    /// space in a sidebar deselects, which would otherwise blank the window.
+    private var selection: Binding<AppPage?> {
+        Binding(
+            get: { environment.page },
+            set: { if let page = $0 { environment.page = page } }
+        )
+    }
+
+    private func row(_ page: AppPage) -> some View {
+        Label(page.title, systemImage: page.symbolName)
+            .badge(badge(for: page).map { Text($0) })
+            .tag(page)
     }
 
     private func badge(for page: AppPage) -> String? {
@@ -139,134 +120,78 @@ struct AppShell: View {
             let bytes = model.totalFoundBytes
             return bytes > 0 ? ByteFormat.compact(bytes) : nil
         case .annotate:
-            return environment.screenPen.isActive ? "●" : nil
+            return environment.screenPen.isActive ? "使用中" : nil
         default:
             return nil
         }
     }
 
-    private var storage: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Divider().overlay(Theme.separator)
-                .padding(.bottom, 4)
-            Text("存储空间")
-                .font(.system(size: 12))
-                .foregroundStyle(Theme.tertiaryLabel)
+    // MARK: - Detail
 
-            if let disk = environment.diskSpace {
-                GeometryReader { geometry in
-                    ZStack(alignment: .leading) {
-                        Capsule().fill(Theme.separator)
-                        Capsule()
-                            .fill(disk.usedFraction > 0.9 ? Theme.junk : Theme.accent)
-                            .frame(width: max(geometry.size.width * disk.usedFraction, 3))
-                    }
-                }
-                .frame(height: 4)
-
-                Text("已用 \(ByteFormat.string(disk.used)) / \(ByteFormat.string(disk.total))")
-                    .font(.system(size: 12))
-                    .foregroundStyle(Theme.secondaryLabel)
-            } else {
-                Text("读取中…")
-                    .font(.system(size: 12))
-                    .foregroundStyle(Theme.tertiaryLabel)
-            }
-        }
-        .padding(.horizontal, 18)
-        .padding(.bottom, 18)
-    }
-
-    // MARK: - Content
-
-    @ViewBuilder
-    private var content: some View {
+    private var detail: some View {
         VStack(spacing: 0) {
             if environment.permissions.fullDiskAccess != .granted {
                 PermissionBanner()
-                Divider().overlay(Theme.separator)
+                Divider()
             }
-            switch environment.page {
-            case .dashboard:
-                DashboardPage()
-            case .junk:
-                if case .done(let summary) = model.phase {
-                    CleanupSummaryView(summary: summary)
-                } else {
-                    JunkCleanerPage()
-                }
-            case .uninstall:
-                UninstallPage(environment: environment)
-            case .startup:
-                StartupPage(environment: environment)
-            case .screenshot:
-                ScreenshotPage()
-            case .record:
-                RecordPage()
-            case .annotate:
-                AnnotatePage()
-            case .whiteboard:
-                WhiteboardPage(model: environment.whiteboard)
-            }
+            page
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(GlassBackdrop())
+        .navigationTitle(environment.page.title)
+    }
+
+    @ViewBuilder
+    private var page: some View {
+        switch environment.page {
+        case .dashboard:
+            DashboardPage()
+        case .junk:
+            if case .done(let summary) = model.phase {
+                CleanupSummaryView(summary: summary)
+            } else {
+                JunkCleanerPage()
+            }
+        case .uninstall:
+            UninstallPage(environment: environment)
+        case .startup:
+            StartupPage(environment: environment)
+        case .screenshot:
+            ScreenshotPage()
+        case .record:
+            RecordPage()
+        case .annotate:
+            AnnotatePage()
+        case .whiteboard:
+            WhiteboardPage(model: environment.whiteboard)
+        }
     }
 }
 
-private struct NavRow: View {
-    let page: AppPage
-    let isActive: Bool
-    let badge: String?
-    let action: () -> Void
-
-    @State private var isHovering = false
+/// Free space, pinned under the sidebar list.
+private struct StorageFooter: View {
+    @Environment(AppEnvironment.self) private var environment
 
     var body: some View {
-        Button(action: action) {
-            HStack(spacing: 9) {
-                Image(systemName: page.symbolName)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(isActive ? Color.white : Theme.secondaryLabel)
-                    .frame(width: 27, height: 27)
-                    .background(
-                        isActive ? Theme.accent : Theme.well,
-                        in: RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    )
-                Text(page.title)
-                    .font(.system(size: 15, weight: isActive ? .medium : .regular))
-                Spacer(minLength: 4)
-                if let badge {
-                    Text(badge)
-                        .font(.system(size: 12, weight: .medium))
-                        .monospacedDigit()
-                        .foregroundStyle(isActive ? Theme.accent : Theme.secondaryLabel)
-                }
+        VStack(alignment: .leading, spacing: 6) {
+            if let disk = environment.diskSpace {
+                ProgressView(value: disk.usedFraction)
+                    .progressViewStyle(.linear)
+                    .tint(disk.usedFraction > 0.9 ? Theme.junk : Theme.accent)
+                    .accessibilityLabel("存储空间")
+                    .accessibilityValue("已用 \(Int(disk.usedFraction * 100))%")
+                Text("已用 \(ByteFormat.string(disk.used)) / \(ByteFormat.string(disk.total))")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            } else {
+                Text("正在读取磁盘…")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
             }
-            .foregroundStyle(isActive ? Theme.label : Theme.secondaryLabel)
-            .padding(.horizontal, 7)
-            .padding(.vertical, 5)
-            .background(
-                RoundedMarker(isActive: isActive, isHovering: isHovering)
-            )
-            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
-        .onHover { isHovering = $0 }
-    }
-}
-
-private struct RoundedMarker: View {
-    let isActive: Bool
-    let isHovering: Bool
-
-    var body: some View {
-        // A tinted fill, not a solid one. Everything else in this window sits
-        // at low contrast on purpose; a saturated block was the one thing
-        // shouting, and it is not even the thing the user is looking at. This
-        // is also what every macOS sidebar does.
-        RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous)
-            .fill(isActive ? Theme.accent.opacity(0.16) : (isHovering ? Theme.accent.opacity(0.08) : Color.clear))
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

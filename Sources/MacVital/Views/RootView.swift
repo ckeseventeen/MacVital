@@ -9,13 +9,9 @@ struct RootView: View {
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
+        // The page title is set inside the split view's detail column, where
+        // the toolbar reads it from.
         AppShell()
-            // The titlebar said "MacVital" on every page, which the Dock icon,
-            // the menu bar and the sidebar header already say. Naming the page
-            // instead makes the one line macOS gives us for free carry
-            // something — and it is what a document-less Mac app conventionally
-            // puts there.
-            .navigationTitle(environment.page.title)
             // Hand the AppKit side what it cannot reach on its own: the
             // environment (for the lifecycle callbacks) and the scene's
             // `openWindow` (the only way to rebuild a closed `Window`).

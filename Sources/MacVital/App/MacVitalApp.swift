@@ -20,7 +20,7 @@ struct MacVitalApp: App {
                 .environment(environment.screenshots)
                 .environment(environment.recorder)
                 .environment(environment.live)
-                .frame(minWidth: 1000, minHeight: 640)
+                .frame(minWidth: 900, minHeight: 600)
                 .preferredColorScheme(environment.settings.appearanceMode.colorScheme)
                 .task { await environment.bootstrap() }
                 // Re-probe whenever the app comes back to the front. The user
@@ -35,13 +35,10 @@ struct MacVitalApp: App {
         .defaultSize(width: 1180, height: 760)
         .commands {
             CommandGroup(replacing: .newItem) {}
-            CommandGroup(after: .toolbar) {
-                Button("重新扫描") {
-                    Task { await environment.scanModel.startScan() }
-                }
-                .keyboardShortcut("r", modifiers: .command)
-                .disabled(environment.scanModel.isScanning || environment.scanModel.isCleaning)
-            }
+            // 显示 → 隐藏/显示边栏 (⌃⌘S), the standard item every split-view
+            // app has.
+            SidebarCommands()
+            AppCommands(environment: environment)
         }
 
         Settings {
