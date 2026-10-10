@@ -1,61 +1,57 @@
 import SwiftUI
 import AppKit
 
-/// Design tokens from the Tidy spec.
+/// Design tokens, expressed in the system's own vocabulary.
 ///
-/// The spec is written in light mode with fixed hex values. Every token here is
-/// declared as a light/dark pair instead: the spec's value is the light side,
-/// and the dark side is derived to keep the same contrast relationships. That
-/// way the design lands as drawn without giving up the appearance setting.
+/// This used to be the Tidy spec transcribed into fixed hex pairs — a hand
+/// approximation of `labelColor`, `separatorColor`, `windowBackgroundColor` and
+/// the rest. The approximations were close, and closeness was the problem: a
+/// hex value does not know about Increase Contrast, Reduce Transparency,
+/// vibrancy on a material, or the accent colour the user picked. The system
+/// colours do, and they are what every Apple app is drawn with.
+///
+/// The names stay so the call sites did not have to change. What they resolve
+/// to is the part that moved.
 enum Theme {
 
     // MARK: - Brand
 
-    /// #378ADD — primary. Buttons, active nav, progress.
-    static let accent = Color(hex: 0x378ADD)
-    /// #D85A30 — junk / reclaimable. The number the user is here to reduce.
-    static let junk = Color(hex: 0xD85A30)
-    /// #1D9E75 — free space, success.
-    static let success = Color(hex: 0x1D9E75)
+    /// The accent colour — buttons, selection, progress.
+    ///
+    /// The brand blue now lives in the `AccentColor` asset rather than here.
+    /// That is the channel macOS gives an app for this: users on "Multicolor"
+    /// see the brand, users who chose an accent in System Settings see theirs.
+    /// A hardcoded hex ignored that choice in this app alone.
+    static let accent = Color.accentColor
+    /// Reclaimable space — the number the user is here to reduce.
+    static let junk = Color.orange
+    /// Free space, success.
+    static let success = Color.green
 
     // MARK: - Surfaces
 
-    /// Window background and sidebar.
-    static let canvas = adaptive(light: 0xF5F5F7, dark: 0x1C1C1E)
-    /// Cards and the content pane.
+    /// Window background.
+    static let canvas = Color(nsColor: .windowBackgroundColor)
+    /// Content surfaces.
+    static let surface = Color(nsColor: .controlBackgroundColor)
+    /// A recessed fill inside a surface — stat tiles, chips, icon tiles.
     ///
-    /// The dark value is a wider step from `canvas` than the spec's light pair
-    /// implies, and deliberately so. White on `#F5F5F7` separates on its own;
-    /// `#252528` on `#1C1C1E` is nine levels per channel, and with the spec's
-    /// "no heavy shadows anywhere" rule there was nothing else doing the work —
-    /// cards read as patches of slightly different background rather than as
-    /// objects sitting on it. Dark surfaces need a larger luminance step than
-    /// their light counterparts to carry the same separation.
-    static let surface = adaptive(light: 0xFFFFFF, dark: 0x2C2C30)
-    /// Inset wells inside a card (stat tiles, search fields).
-    static let well = adaptive(light: 0xF5F5F7, dark: 0x37373C)
+    /// A system fill rather than a flat colour: it is translucent, so it reads
+    /// correctly on whatever it sits on, and it strengthens under Increase
+    /// Contrast. The dark-mode separation problem the old hex pair needed a
+    /// hand-tuned step for is what the fill colours are designed around.
+    static let well = Color(nsColor: .tertiarySystemFill)
 
     // MARK: - Text
 
-    static let label = adaptive(light: 0x1D1D1F, dark: 0xF2F2F5)
-    static let secondaryLabel = adaptive(light: 0x8E8E93, dark: 0x98989F)
-    static let tertiaryLabel = adaptive(light: 0xAEAEB2, dark: 0x7A7A80)
+    static let label = Color(nsColor: .labelColor)
+    static let secondaryLabel = Color(nsColor: .secondaryLabelColor)
+    static let tertiaryLabel = Color(nsColor: .tertiaryLabelColor)
 
     // MARK: - Lines
 
-    /// The spec's 0.5–1px hairlines. No heavy shadows anywhere.
-    static var separator: Color {
-        Color.adaptive(
-            light: Color.black.opacity(0.08),
-            dark: Color.white.opacity(0.13)
-        )
-    }
-    static var strongSeparator: Color {
-        Color.adaptive(
-            light: Color.black.opacity(0.14),
-            dark: Color.white.opacity(0.16)
-        )
-    }
+    static let separator = Color(nsColor: .separatorColor)
+    static let strongSeparator = Color(nsColor: .gridColor)
 
     // MARK: - Geometry
 
@@ -105,11 +101,6 @@ enum Theme {
         static let barPaddingV: CGFloat = 16
     }
 
-    // MARK: - Helpers
-
-    private static func adaptive(light: UInt32, dark: UInt32) -> Color {
-        Color.adaptive(light: Color(hex: light), dark: Color(hex: dark))
-    }
 }
 
 extension Color {

@@ -226,7 +226,7 @@ struct UninstallPage: View {
             }
         } else {
             VStack(spacing: 10) {
-                GlyphTile(systemImage: "square.grid.2x2", tint: Color(hex: 0x534AB7), size: 46)
+                GlyphTile(systemImage: "square.grid.2x2", tint: Color.indigo, size: 46)
                 Text("从左侧选择要卸载的应用")
                     .font(.system(size: 14))
                     .foregroundStyle(Theme.secondaryLabel)

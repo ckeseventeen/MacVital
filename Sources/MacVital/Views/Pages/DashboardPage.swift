@@ -173,7 +173,7 @@ struct DashboardPage: View {
                     title: "卸载应用",
                     subtitle: "连同散落的配置一起移除",
                     systemImage: "square.grid.2x2",
-                    tint: Color(hex: 0x534AB7)
+                    tint: Color.indigo
                 ) {
                     environment.page = .uninstall
                 }
@@ -191,7 +191,7 @@ struct DashboardPage: View {
                     title: environment.screenPen.isActive ? "退出画笔" : "屏幕画笔",
                     subtitle: environment.screenPen.isActive ? "按 esc 也可退出" : "在屏幕上直接标注",
                     systemImage: "pencil.tip",
-                    tint: Color(hex: 0xBA7517)
+                    tint: Color.orange
                 ) {
                     environment.screenPen.toggle()
                 }

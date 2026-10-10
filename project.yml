@@ -96,6 +96,10 @@ targets:
         INFOPLIST_FILE: Sources/MacVital/Resources/Info.plist
         CODE_SIGN_ENTITLEMENTS: Sources/MacVital/Resources/MacVital.entitlements
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        # The brand colour, declared the way macOS expects one. A user who
+        # chose "Multicolor" in System Settings sees it; a user who picked
+        # their own accent sees theirs, in this app as in every other.
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
         ENABLE_PREVIEWS: YES
         COMBINE_HIDPI_IMAGES: YES
 

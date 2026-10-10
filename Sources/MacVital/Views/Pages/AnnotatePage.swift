@@ -37,7 +37,7 @@ struct AnnotatePage: View {
             HStack(spacing: 16) {
                 GlyphTile(
                     systemImage: pen.isActive ? "pencil.tip.crop.circle.fill" : "pencil.tip",
-                    tint: Color(hex: 0xBA7517),
+                    tint: Color.orange,
                     size: 46
                 )
                 VStack(alignment: .leading, spacing: 3) {

@@ -9,15 +9,19 @@ import MacVitalKit
 /// presentation, and nothing in the rule engine should ever be able to depend
 /// on one.
 extension ScanCategory {
+    /// System palette colours rather than hand-mixed RGB. The comments on the
+    /// old values already named the system colour each one approximated; the
+    /// real ones adapt to dark mode and Increase Contrast, the approximations
+    /// stayed the same in both.
     var tint: Color {
         switch self {
-        case .developerResidue: return Color(red: 0.44, green: 0.36, blue: 0.92)  // indigo
-        case .appResidue:       return Color(red: 0.95, green: 0.55, blue: 0.16)  // amber
-        case .largeFiles:       return Color(red: 0.93, green: 0.33, blue: 0.44)  // rose
-        case .duplicateFiles:   return Color(red: 0.13, green: 0.68, blue: 0.66)  // teal
-        case .caches:           return Color(red: 0.25, green: 0.56, blue: 0.98)  // blue
-        case .emptyFolders:     return Color(red: 0.52, green: 0.55, blue: 0.60)  // slate
-        case .appUninstall:     return Color(red: 0.85, green: 0.28, blue: 0.28)  // red
+        case .developerResidue: return .indigo
+        case .appResidue:       return .orange
+        case .largeFiles:       return .pink
+        case .duplicateFiles:   return .teal
+        case .caches:           return .blue
+        case .emptyFolders:     return .gray
+        case .appUninstall:     return .red
         }
     }
 

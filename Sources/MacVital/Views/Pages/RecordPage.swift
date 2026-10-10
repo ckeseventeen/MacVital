@@ -150,7 +150,7 @@ struct RecordPage: View {
                 HStack(spacing: 16) {
                     GlyphTile(
                         systemImage: live.isBroadcasting ? "dot.radiowaves.left.and.right" : "antenna.radiowaves.left.and.right",
-                        tint: Color(hex: 0x534AB7),
+                        tint: Color.indigo,
                         size: 46
                     )
                     VStack(alignment: .leading, spacing: 3) {
@@ -170,7 +170,7 @@ struct RecordPage: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.large)
-                    .tint(live.isBroadcasting ? Theme.junk : Color(hex: 0x534AB7))
+                    .tint(live.isBroadcasting ? Theme.junk : Color.indigo)
                     .disabled(live.isStarting)
                 }
 
