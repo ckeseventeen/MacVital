@@ -16,7 +16,10 @@ struct SettingsView: View {
             SafetySettings()
                 .tabItem { Label("安全", systemImage: "shield") }
         }
-        .padding(20)
+        // No padding of its own: a grouped form already insets itself the
+        // way System Settings does, and an extra 20pt made every tab look
+        // like a card floating in a box.
+        .frame(width: 540, height: 480)
     }
 }
 
@@ -35,10 +38,8 @@ struct GeneralSettings: View {
                     }
                 }
                 .pickerStyle(.inline)
-            } header: {
-                Text("外观")
             } footer: {
-                Text("默认跟随系统的浅色/深色设置。这里的选择只影响 MacVital 自己。")
+                Text("默认跟随系统的浅色/深色设置。这里的选择只影响 PureMark 自己。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -49,7 +50,7 @@ struct GeneralSettings: View {
             } header: {
                 Text("后台")
             } footer: {
-                Text("开启后关闭窗口不退出 App，菜单栏网速、屏幕画笔和隔离区到期清扫继续工作。点 Dock 图标或菜单栏的「打开 MacVital」可以随时把窗口叫回来，⌘Q 仍然是退出。关闭后恢复成关窗即退出。")
+                Text("开启后关闭窗口不退出 App，菜单栏网速、屏幕画笔和隔离区到期清扫继续工作。点 Dock 图标或菜单栏的「打开 PureMark」可以随时把窗口叫回来，⌘Q 仍然是退出。关闭后恢复成关窗即退出。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -186,7 +187,7 @@ struct ScanSettings: View {
                         rootsDraft = ScanOptions().projectRoots.joined(separator: "\n")
                     }
                 }
-                Text("每行一个目录。MacVital 只在这些目录下搜索 node_modules、Pods、target 等构建产物。")
+                Text("每行一个目录。PureMark 只在这些目录下搜索 node_modules、Pods、target 等构建产物。")
                     .font(.caption)
                     .foregroundStyle(.tertiary)
                     .fixedSize(horizontal: false, vertical: true)

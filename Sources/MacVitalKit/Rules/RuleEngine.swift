@@ -136,7 +136,7 @@ public struct RuleEngine: Sendable {
 
         // 6. Never touch ourselves — the quarantine store above all.
         for prefix in selfProtectedPrefixes where protectedPaths.isUnder(resolved, prefix) {
-            return .deny(rule.id, .selfProtection, "属于 MacVital 自身的数据（如隔离区），不参与清理。")
+            return .deny(rule.id, .selfProtection, "属于 PureMark 自身的数据（如隔离区），不参与清理。")
         }
 
         // 7. Documents / Desktop / Downloads / Pictures are off limits unless
