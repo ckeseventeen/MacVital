@@ -38,6 +38,9 @@ struct MacVitalApp: App {
             // 显示 → 隐藏/显示边栏 (⌃⌘S), the standard item every split-view
             // app has.
             SidebarCommands()
+            // 显示 → 显示/隐藏检查器, wired to whichever page's `.inspector`
+            // is in the focused window.
+            InspectorCommands()
             AppCommands(environment: environment)
         }
 

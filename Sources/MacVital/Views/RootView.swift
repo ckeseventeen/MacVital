@@ -45,6 +45,48 @@ struct RootView: View {
 
 // MARK: - Permission banner
 
+extension View {
+    /// Pins the Full Disk Access banner to the top of this view, under the
+    /// toolbar, while the permission is missing.
+    ///
+    /// The shell applies it around every page. A page that carries an
+    /// `.inspector` turns that off and applies it to its own content column
+    /// instead: the inspector splits the detail area and lays each side out
+    /// against the toolbar on its own, so a banner stacked above the whole
+    /// split pushed the content column down without it noticing, and it
+    /// still left a toolbar's height of empty space at its top.
+    func permissionBannerInset(isEnabled: Bool = true) -> some View {
+        modifier(PermissionBannerInset(isEnabled: isEnabled))
+    }
+}
+
+private struct PermissionBannerInset: ViewModifier {
+    @Environment(AppEnvironment.self) private var environment
+    let isEnabled: Bool
+
+    func body(content: Content) -> some View {
+        VStack(spacing: 0) {
+            if isEnabled, environment.permissions.fullDiskAccess != .granted {
+                PermissionBanner()
+                    // Ideal width zero: the banner takes whatever width the
+                    // page has and never asks for more. Inside a page with an
+                    // inspector it sits in a split view pane, and the split
+                    // view sizes its panes from their ideal widths. The
+                    // banner's ideal is its whole sentence on one line plus
+                    // three buttons — wider than a default-sized window can
+                    // give that pane beside the inspector — and AppKit kept
+                    // re-solving the split until it terminated the app
+                    // ("more Update Constraints in Window passes than there
+                    // are views in the window").
+                    .frame(minWidth: 0, idealWidth: 0, maxWidth: .infinity)
+                Divider()
+            }
+            content
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+}
+
 /// Shown while Full Disk Access is missing — or while the app cannot tell.
 ///
 /// Two things this banner must not do, both of which earlier versions did:
@@ -77,44 +119,17 @@ struct PermissionBanner: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
+            // One row, whatever the width: the text truncates rather than
+            // wraps, and the full sentence is in the tooltip and behind the
+            // disclosure button. Beside an open inspector the banner gets
+            // half the window, and wrapping there broke a sentence over four
+            // lines next to three buttons.
             HStack(spacing: 11) {
-                Image(systemName: isDenied ? "lock.shield.fill" : "questionmark.circle.fill")
-                    .foregroundStyle(isDenied ? Theme.junk : Theme.secondaryLabel)
-
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(isDenied ? "未获得「完整磁盘访问权限」" : "无法确认是否已获得「完整磁盘访问权限」")
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(Theme.label)
-                    Text(isDenied
-                         ? "~/Library 下的绝大部分内容不可见，扫描结果会严重偏少。"
-                         : "扫描仍会正常进行；如果结果明显偏少，多半是缺这个权限。")
-                        .font(.system(size: 12))
-                        .foregroundStyle(Theme.secondaryLabel)
-                }
-
+                icon
+                message
+                    .layoutPriority(-1)
                 Spacer(minLength: 8)
-
-                Button("重新检测") { permissions.refresh() }
-                    .controlSize(.small)
-
-                Button("前往设置") { permissions.openSystemSettings() }
-                    .controlSize(.small)
-
-                Button("授权后重启") { permissions.relaunch() }
-                    .controlSize(.small)
-                    .buttonStyle(.borderedProminent)
-
-                if isDenied {
-                    Button {
-                        withAnimation(.easeInOut(duration: 0.18)) { showingDetail.toggle() }
-                    } label: {
-                        Image(systemName: showingDetail ? "chevron.up" : "chevron.down")
-                            .font(.system(size: 11, weight: .semibold))
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(Theme.secondaryLabel)
-                    .help(showingDetail ? "收起说明" : "授权了还是不行？")
-                }
+                actions
             }
 
             if isDenied, showingDetail {
@@ -140,9 +155,63 @@ struct PermissionBanner: View {
                 }
             }
         }
-        .padding(.horizontal, Theme.Metric.pagePaddingH)
+        .padding(.horizontal, 20)
         .padding(.vertical, 9)
         .background((isDenied ? Theme.junk : Color.secondary).opacity(0.09))
+    }
+
+    private var icon: some View {
+        Image(systemName: isDenied ? "lock.shield.fill" : "questionmark.circle.fill")
+            .foregroundStyle(isDenied ? Theme.junk : Theme.secondaryLabel)
+            .accessibilityHidden(true)
+    }
+
+    private var headline: String {
+        isDenied ? "未获得「完整磁盘访问权限」" : "无法确认是否已获得「完整磁盘访问权限」"
+    }
+
+    private var explanation: String {
+        isDenied
+            ? "~/Library 下的绝大部分内容不可见，扫描结果会严重偏少。"
+            : "扫描仍会正常进行；如果结果明显偏少，多半是缺这个权限。"
+    }
+
+    private var message: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(headline)
+                .font(.body.weight(.medium))
+            Text(explanation)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+        }
+        .lineLimit(1)
+        .truncationMode(.tail)
+        .help(headline + "\n" + explanation)
+        .accessibilityElement(children: .combine)
+    }
+
+    private var actions: some View {
+        HStack(spacing: 8) {
+            Button("重新检测") { permissions.refresh() }
+            Button("前往设置") { permissions.openSystemSettings() }
+            Button("授权后重启") { permissions.relaunch() }
+                .buttonStyle(.borderedProminent)
+
+            if isDenied {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.18)) { showingDetail.toggle() }
+                } label: {
+                    Image(systemName: showingDetail ? "chevron.up" : "chevron.down")
+                        .font(.caption.weight(.semibold))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .help(showingDetail ? "收起说明" : "授权了还是不行？")
+                .accessibilityLabel(showingDetail ? "收起说明" : "显示说明")
+            }
+        }
+        .controlSize(.small)
+        .fixedSize()
     }
 }
 

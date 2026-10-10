@@ -129,15 +129,18 @@ struct AppShell: View {
     // MARK: - Detail
 
     private var detail: some View {
-        VStack(spacing: 0) {
-            if environment.permissions.fullDiskAccess != .granted {
-                PermissionBanner()
-                Divider()
-            }
-            page
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
-        .navigationTitle(environment.page.title)
+        page
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .permissionBannerInset(isEnabled: !pageHostsBanner)
+            .navigationTitle(environment.page.title)
+    }
+
+    /// Whether the visible page places the permission banner itself — the
+    /// pages with an inspector do; see `permissionBannerInset`.
+    private var pageHostsBanner: Bool {
+        guard environment.page == .junk else { return false }
+        if case .done = model.phase { return false }
+        return true
     }
 
     @ViewBuilder
