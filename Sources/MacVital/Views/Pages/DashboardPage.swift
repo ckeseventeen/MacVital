@@ -6,37 +6,41 @@ struct DashboardPage: View {
     @Environment(ScanViewModel.self) private var model
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: Theme.Metric.sectionSpacing) {
-                greeting
-                overview
-                quickActions
-                systemStatus
-            }
-            .padding(.horizontal, Theme.Metric.pagePaddingH)
-            .padding(.vertical, Theme.Metric.pagePaddingV)
+        // Storage, what a scan can give back, and the one thing to do about
+        // it. This page used to also repeat the sidebar as a grid of quick
+        // actions and repeat the permission banner and Settings as status
+        // cards; all three were ways to reach things already one click away.
+        VStack(spacing: 28) {
+            Spacer(minLength: 0)
+            overview
+            primaryAction
+            Spacer(minLength: 0)
         }
+        .frame(maxWidth: 760)
+        .padding(.horizontal, Theme.Metric.pagePaddingH)
+        .padding(.vertical, Theme.Metric.pagePaddingV)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .navigationSubtitle(statusLine)
         .task { environment.refreshDiskSpace() }
     }
 
-    // MARK: - Greeting
-
-    private var greeting: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(Self.timeOfDayGreeting())
-                .font(.title.weight(.semibold))
-            Text(statusLine)
-                .foregroundStyle(.secondary)
-        }
-    }
-
-    private static func timeOfDayGreeting() -> String {
-        switch Calendar.current.component(.hour, from: Date()) {
-        case 5..<12: return "早上好"
-        case 12..<14: return "中午好"
-        case 14..<18: return "下午好"
-        case 18..<23: return "晚上好"
-        default: return "夜深了"
+    @ViewBuilder
+    private var primaryAction: some View {
+        if model.isScanning {
+            Button("正在扫描…") { environment.page = .junk }
+                .controlSize(.large)
+        } else if !model.findings.isEmpty {
+            Button("查看可回收项目") { environment.page = .junk }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+        } else {
+            Button("扫描可回收空间") {
+                environment.page = .junk
+                Task { await model.startScan() }
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.large)
+            .disabled(model.isCleaning)
         }
     }
 
@@ -44,12 +48,12 @@ struct DashboardPage: View {
         guard let disk = environment.diskSpace else { return "正在读取磁盘信息…" }
         let free = ByteFormat.string(disk.free)
         if model.totalFoundBytes > 0 {
-            return "可用 \(free)，上次扫描发现 \(ByteFormat.string(model.totalFoundBytes)) 可回收。"
+            return "可用 \(free) · 上次扫描发现 \(ByteFormat.string(model.totalFoundBytes)) 可回收"
         }
         if disk.usedFraction > 0.9 {
-            return "可用 \(free)，磁盘快满了，建议扫描一次。"
+            return "可用 \(free) · 磁盘快满了，建议扫描一次"
         }
-        return "可用 \(free)，状态良好。"
+        return "可用 \(free)"
     }
 
     // MARK: - Overview
@@ -94,7 +98,18 @@ struct DashboardPage: View {
             spacing: Theme.Metric.gridSpacing
         ) {
             ForEach(stats, id: \.label) { stat in
-                StatTile(label: stat.label, value: stat.value, dot: stat.dot, valueTint: stat.tint)
+                if stat.label == "隔离区" {
+                    // The way into the quarantine from the window, now that
+                    // the quick-action grid that carried it is gone.
+                    Button { environment.showQuarantine = true } label: {
+                        StatTile(label: stat.label, value: stat.value, dot: stat.dot,
+                                 valueTint: stat.tint, showsDisclosure: true)
+                    }
+                    .buttonStyle(.plain)
+                    .help("打开隔离区（⇧⌘K）")
+                } else {
+                    StatTile(label: stat.label, value: stat.value, dot: stat.dot, valueTint: stat.tint)
+                }
             }
         }
     }
@@ -139,214 +154,6 @@ struct DashboardPage: View {
             ),
         ]
     }
-
-    // MARK: - Quick actions
-
-    private var quickActions: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            SectionTitle(title: "快捷操作", systemImage: "bolt.fill")
-
-            // Three columns, not two. There are five actions, and two columns
-            // left the last one alone on its own row with a hole beside it.
-            LazyVGrid(
-                columns: Array(
-                    repeating: GridItem(.flexible(), spacing: Theme.Metric.gridSpacing),
-                    count: 3
-                ),
-                spacing: Theme.Metric.gridSpacing
-            ) {
-                QuickAction(
-                    title: "智能扫描",
-                    subtitle: model.isScanning ? "正在扫描…" : "一键找出可回收空间",
-                    systemImage: "sparkle.magnifyingglass",
-                    tint: Theme.accent
-                ) {
-                    environment.page = .junk
-                    Task { await model.startScan() }
-                }
-                .disabled(model.isScanning || model.isCleaning)
-
-                QuickAction(
-                    title: "卸载应用",
-                    subtitle: "连同散落的配置一起移除",
-                    systemImage: "square.grid.2x2",
-                    tint: Color.indigo
-                ) {
-                    environment.page = .uninstall
-                }
-
-                QuickAction(
-                    title: "截图",
-                    subtitle: "选区 · 全屏 · 窗口",
-                    systemImage: "camera.viewfinder",
-                    tint: Theme.success
-                ) {
-                    environment.page = .screenshot
-                }
-
-                QuickAction(
-                    title: environment.screenPen.isActive ? "退出画笔" : "屏幕画笔",
-                    subtitle: environment.screenPen.isActive ? "按 esc 也可退出" : "在屏幕上直接标注",
-                    systemImage: "pencil.tip",
-                    tint: Color.orange
-                ) {
-                    environment.screenPen.toggle()
-                }
-
-                QuickAction(
-                    title: "隔离区",
-                    subtitle: environment.quarantineBytes > 0
-                        ? "\(ByteFormat.string(environment.quarantineBytes)) 待清除"
-                        : "已清空",
-                    systemImage: "clock.arrow.circlepath",
-                    tint: Theme.success
-                ) {
-                    environment.showQuarantine = true
-                }
-            }
-        }
-    }
-}
-
-// MARK: - System status
-
-extension DashboardPage {
-
-    /// What the app can and cannot do on this machine right now.
-    ///
-    /// Not filler. Full Disk Access decides whether a scan sees most of
-    /// `~/Library` at all — the README spends a section on it — and the
-    /// privileged helper decides whether anything under `/Library` can be
-    /// touched. Both were discoverable only by running into them: a scan came
-    /// back thin, or a row was locked, and nothing on the overview said why.
-    ///
-    /// It also gives the page a bottom. The dashboard ended two-thirds of the
-    /// way down a tall window, which read as unfinished.
-    fileprivate var systemStatus: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            SectionTitle(title: "系统状态", systemImage: "checkmark.shield", tint: Theme.success)
-
-            LazyVGrid(
-                columns: Array(
-                    repeating: GridItem(.flexible(), spacing: Theme.Metric.gridSpacing),
-                    count: 3
-                ),
-                spacing: Theme.Metric.gridSpacing
-            ) {
-                StatusTile(
-                    title: "完整磁盘访问",
-                    detail: fullDiskDetail,
-                    systemImage: "externaldrive.badge.person.crop",
-                    state: fullDiskState
-                )
-                StatusTile(
-                    title: "特权助手",
-                    detail: environment.helperStatus.summary,
-                    systemImage: "key",
-                    state: environment.helperStatus == .enabled ? .good
-                        : (environment.helperStatus == .unsupported ? .unavailable : .attention)
-                )
-                StatusTile(
-                    title: "隔离区保留",
-                    detail: "\(environment.settings.retentionDays) 天后自动清除",
-                    systemImage: "clock.arrow.circlepath",
-                    state: .good
-                )
-            }
-        }
-    }
-
-    private var fullDiskState: StatusTile.State {
-        switch environment.permissions.fullDiskAccess {
-        case .granted: return .good
-        case .denied: return .attention
-        case .unknown: return .unavailable
-        }
-    }
-
-    private var fullDiskDetail: String {
-        switch environment.permissions.fullDiskAccess {
-        case .granted: return "已授权，扫描可以看到完整的 ~/Library"
-        case .denied: return "未授权，扫描结果会严重偏少"
-        case .unknown: return "无法确定，可在设置中重新检测"
-        }
-    }
-}
-
-/// One line of "can the app do this here", with the reason attached.
-private struct StatusTile: View {
-    enum State {
-        case good
-        case attention
-        /// Not a problem to fix — a property of this build or machine.
-        case unavailable
-
-        var tint: Color {
-            switch self {
-            case .good: return Theme.success
-            case .attention: return Theme.junk
-            case .unavailable: return Theme.secondaryLabel
-            }
-        }
-
-        var accessibilityLabel: String {
-            switch self {
-            case .good: return "正常"
-            case .attention: return "需要处理"
-            case .unavailable: return "不可用"
-            }
-        }
-
-        var symbol: String {
-            switch self {
-            case .good: return "checkmark.circle.fill"
-            case .attention: return "exclamationmark.triangle.fill"
-            case .unavailable: return "minus.circle.fill"
-            }
-        }
-    }
-
-    let title: String
-    let detail: String
-    let systemImage: String
-    let state: State
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            HStack(spacing: 7) {
-                Image(systemName: systemImage)
-                    .foregroundStyle(.secondary)
-                    .accessibilityHidden(true)
-                Text(title)
-                    .font(.body.weight(.medium))
-                Spacer(minLength: 0)
-                Image(systemName: state.symbol)
-                    .font(.callout)
-                    .foregroundStyle(state.tint)
-                    .accessibilityLabel(state.accessibilityLabel)
-            }
-            Text(detail)
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 14)
-        // `maxHeight` matters as much as `maxWidth` here. A `LazyVGrid` row is
-        // as tall as its tallest cell, but each cell only takes its own
-        // intrinsic height and is centred in the row — so the background
-        // painted a short box floating in a tall row. Narrow the window until
-        // one card's text wraps to a second line and the three stop matching:
-        // "此构建不可用（需要 Developer ID 签名）" is the one that does it.
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        // The same surface as `QuickAction` directly above it: both are
-        // page-level cards in a three-column grid of identical width, and a
-        // `well` there was a third treatment (recessed fill at card radius)
-        // that matched neither it nor `StatTile`. Interactivity is carried by
-        // the hover tint on the quick actions, not by the surface.
-        .glassPanel()
-    }
 }
 
 // MARK: - Pieces
@@ -356,6 +163,7 @@ private struct StatTile: View {
     let value: String
     let dot: Color
     let valueTint: Color
+    var showsDisclosure = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
@@ -367,6 +175,13 @@ private struct StatTile: View {
                 Text(label)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
+                if showsDisclosure {
+                    Spacer(minLength: 0)
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.tertiary)
+                        .accessibilityHidden(true)
+                }
             }
             Text(value)
                 .font(.title2.weight(.medium))
@@ -381,50 +196,5 @@ private struct StatTile: View {
         .padding(.vertical, 14)
         .frame(maxHeight: .infinity)
         .background(Theme.well, in: RoundedRectangle(cornerRadius: Theme.Radius.tile, style: .continuous))
-    }
-}
-
-private struct QuickAction: View {
-    let title: String
-    let subtitle: String
-    let systemImage: String
-    let tint: Color
-    let action: () -> Void
-
-    @State private var isHovering = false
-    @Environment(\.isEnabled) private var isEnabled
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 11) {
-                GlyphTile(systemImage: systemImage, tint: tint, size: 34)
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(title)
-                        .font(.body.weight(.semibold))
-                    Text(subtitle)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 17)
-            .padding(.vertical, 15)
-            // Fills the row height for the same reason as `StatusTile`; a long
-            // title wrapping at a narrow window is what makes the difference
-            // visible. Vertically centred rather than top-aligned — this is one
-            // row of icon and text, not a block that flows.
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-            .glassPanel(tinted: isHovering ? tint : nil)
-            .overlay(
-                RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
-                    .strokeBorder(isHovering ? tint.opacity(0.4) : Color.clear, lineWidth: 1.5)
-            )
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .opacity(isEnabled ? 1 : 0.5)
-        .onHover { isHovering = $0 && isEnabled }
     }
 }
