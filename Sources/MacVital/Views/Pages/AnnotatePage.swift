@@ -10,14 +10,13 @@ struct AnnotatePage: View {
     /// republish when its state changed.
     @Environment(ScreenPenController.self) private var pen
 
-    private let tools: [AnnotationTool] = [.select, .pen, .highlighter, .rectangle, .ellipse, .arrow, .text, .eraser]
-
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: Theme.Metric.sectionSpacing) {
+                // Tools, colours, widths and the spotlight are chosen on the
+                // floating palette that appears with the pen. This page used
+                // to carry a second copy of every one of them.
                 toggleCard
-                toolsCard
-                focusCard
                 shortcutsCard
             }
             .padding(.horizontal, Theme.Metric.pagePaddingH)
@@ -51,90 +50,6 @@ struct AnnotatePage: View {
                 Button(pen.isActive ? "退出" : "开启") { pen.toggle() }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.large)
-            }
-        }
-    }
-
-    // MARK: - Tools
-
-    private var toolsCard: some View {
-        Card {
-            VStack(alignment: .leading, spacing: 18) {
-                Text("工具")
-                    .font(.body.weight(.medium))
-                    .foregroundStyle(Theme.label)
-
-                LazyVGrid(
-                    columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 4),
-                    spacing: 10
-                ) {
-                    ForEach(tools) { candidate in
-                        ToolChip(tool: candidate, isOn: pen.tool == candidate) {
-                            pen.tool = candidate
-                        }
-                    }
-                }
-
-                labelledRow("颜色") {
-                    ForEach(Array(ScreenPenController.palette.enumerated()), id: \.offset) { index, color in
-                        Button { pen.colorIndex = index } label: {
-                            Circle()
-                                .fill(Color(nsColor: color))
-                                .frame(width: 22, height: 22)
-                                .overlay(Circle().strokeBorder(Theme.label, lineWidth: pen.colorIndex == index ? 2 : 0))
-                                .overlay(Circle().strokeBorder(Theme.separator, lineWidth: 0.5))
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-
-                labelledRow("粗细") {
-                    ForEach(Array(ScreenPenController.widths.enumerated()), id: \.offset) { index, width in
-                        Button { pen.widthIndex = index } label: {
-                            Circle()
-                                .fill(pen.widthIndex == index ? pen.currentColor : Theme.secondaryLabel)
-                                .frame(width: width + 5, height: width + 5)
-                                .frame(width: 30, height: 30)
-                                .background(
-                                    pen.widthIndex == index ? Theme.accent.opacity(0.12) : Color.clear,
-                                    in: RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                )
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-            }
-        }
-    }
-
-    // MARK: - Focus
-
-    private var focusCard: some View {
-        Card {
-            VStack(alignment: .leading, spacing: 14) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("聚光灯与遮罩")
-                        .font(.body.weight(.medium))
-                        .foregroundStyle(Theme.label)
-                    Text("把屏幕其余部分压暗，只留下你要讲的那一块。压暗层在画笔之下，亮区里照样能画。")
-                        .font(.callout)
-                        .foregroundStyle(Theme.secondaryLabel)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-
-                HStack(spacing: 10) {
-                    ForEach(FocusMode.allCases) { mode in
-                        FocusChip(mode: mode, isOn: pen.focusMode == mode) {
-                            pen.focusMode = mode
-                        }
-                    }
-                }
-
-                if pen.focusMode == .mask {
-                    Label("遮罩模式下，切到「选择」工具再拖动即可改变亮区范围。", systemImage: "info.circle")
-                        .font(.callout)
-                        .foregroundStyle(Theme.tertiaryLabel)
-                }
             }
         }
     }
@@ -178,80 +93,5 @@ struct AnnotatePage: View {
             ("⇧⌘Z", "重做"),
             ("delete", "删除选中的标注"),
         ]
-    }
-
-    // MARK: - Helper
-
-    private func labelledRow<Content: View>(
-        _ label: String,
-        @ViewBuilder content: () -> Content
-    ) -> some View {
-        HStack(spacing: 12) {
-            Text(label)
-                .font(.body)
-                .foregroundStyle(Theme.secondaryLabel)
-                .frame(width: 34, alignment: .leading)
-            content()
-            Spacer(minLength: 0)
-        }
-    }
-}
-
-// MARK: - Chips
-
-private struct ToolChip: View {
-    let tool: AnnotationTool
-    let isOn: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            VStack(spacing: 5) {
-                Image(systemName: tool.symbolName)
-                    .font(.title3)
-                Text(tool.title)
-                    .font(.callout)
-            }
-            .foregroundStyle(isOn ? Color.white : Theme.label)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 11)
-            .background(
-                isOn ? Theme.accent : Theme.well,
-                in: RoundedRectangle(cornerRadius: Theme.Radius.tile, style: .continuous)
-            )
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-    }
-}
-
-private struct FocusChip: View {
-    let mode: FocusMode
-    let isOn: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 8) {
-                Image(systemName: mode.symbolName)
-                    .font(.body)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(mode.title)
-                        .font(.body.weight(.medium))
-                    Text(mode.detail)
-                        .font(.subheadline)
-                        .opacity(0.8)
-                }
-            }
-            .foregroundStyle(isOn ? Color.white : Theme.label)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-            .background(
-                isOn ? Theme.accent : Theme.well,
-                in: RoundedRectangle(cornerRadius: Theme.Radius.tile, style: .continuous)
-            )
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
     }
 }
