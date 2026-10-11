@@ -14,6 +14,16 @@ enum AppPage: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
+    /// Pages whose results depend on Full Disk Access — the only ones that
+    /// show the banner asking for it. Screenshots and the whiteboard never
+    /// read ~/Library, and nagging there was noise.
+    var needsFullDiskAccess: Bool {
+        switch self {
+        case .dashboard, .junk, .uninstall, .startup: return true
+        case .screenshot, .record, .annotate, .whiteboard: return false
+        }
+    }
+
     var title: String {
         switch self {
         case .dashboard: return "总览"
@@ -131,16 +141,13 @@ struct AppShell: View {
     private var detail: some View {
         page
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .permissionBannerInset(isEnabled: !pageHostsBanner)
+            // Only where the permission changes what the page can see. The
+            // junk page carries an inspector and places the banner in its own
+            // content column — see `permissionBannerInset`.
+            .permissionBannerInset(
+                isEnabled: environment.page.needsFullDiskAccess && environment.page != .junk
+            )
             .navigationTitle(environment.page.title)
-    }
-
-    /// Whether the visible page places the permission banner itself — the
-    /// pages with an inspector do; see `permissionBannerInset`.
-    private var pageHostsBanner: Bool {
-        guard environment.page == .junk else { return false }
-        if case .done = model.phase { return false }
-        return true
     }
 
     @ViewBuilder
@@ -149,11 +156,7 @@ struct AppShell: View {
         case .dashboard:
             DashboardPage()
         case .junk:
-            if case .done(let summary) = model.phase {
-                CleanupSummaryView(summary: summary)
-            } else {
-                JunkCleanerPage()
-            }
+            JunkCleanerPage()
         case .uninstall:
             UninstallPage(environment: environment)
         case .startup:

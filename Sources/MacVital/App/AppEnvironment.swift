@@ -37,7 +37,6 @@ final class AppEnvironment {
     /// Sheet state lives here rather than in a view: the dashboard's quick
     /// actions and the junk page's footer both raise them from different
     /// branches of the tree.
-    var showConfirm = false
     var showQuarantine = false
 
     init() {

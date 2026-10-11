@@ -22,11 +22,6 @@ struct RootView: View {
                     openWindow(id: MacVitalApp.mainWindowID)
                 }
             }
-            .sheet(isPresented: Bindable(environment).showConfirm) {
-                ConfirmSheet(isPresented: Bindable(environment).showConfirm)
-                    .environment(model)
-                    .environment(environment)
-            }
             .sheet(isPresented: Bindable(environment).showQuarantine) {
                 QuarantineView(isPresented: Bindable(environment).showQuarantine, environment: environment)
             }
@@ -122,74 +117,41 @@ private struct PermissionBannerInset: ViewModifier {
 ///    absent used to get told flatly that the permission was missing.
 /// 2. **Offer an action that cannot work.** Full Disk Access is bound at
 ///    process launch, so re-probing can never observe a grant the user just
-///    made. "Re-check" is still here — pressing it and seeing nothing change
-///    is the honest outcome — but the banner now says why, and relaunching is
-///    the prominent action rather than one hidden behind having visited
-///    Settings first.
+///    made. The re-check button is gone for that reason; relaunching is the
+///    check, and it is the prominent action.
 struct PermissionBanner: View {
     @Environment(AppEnvironment.self) private var environment
 
     private var permissions: PermissionsCoordinator { environment.permissions }
     private var isDenied: Bool { permissions.fullDiskAccess == .denied }
 
-    /// The explanation is collapsed until asked for.
-    ///
-    /// Both notes below are things the user genuinely needs at the moment they
-    /// hit them — that a relaunch is required, and that an ad-hoc build's grant
-    /// dies on every rebuild — so neither can be cut. But left open they are
-    /// roughly a hundred and fifty words of documentation nailed permanently
-    /// across the top of every page, and they pushed the actual content of the
-    /// overview a fifth of the way down the window. A headline, the buttons,
-    /// and a way to ask why.
-    @State private var showingDetail = false
-
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            // One row, whatever the width: the text truncates rather than
-            // wraps, and the full sentence is in the tooltip and behind the
-            // disclosure button. Beside an open inspector the banner gets
-            // half the window, and wrapping there broke a sentence over four
-            // lines next to three buttons.
-            HStack(spacing: 11) {
-                icon
-                message
-                    .layoutPriority(-1)
-                Spacer(minLength: 8)
-                actions
+        // One row, whatever the width: the text truncates rather than wraps,
+        // and the full sentence is in the tooltip. Beside an open inspector
+        // the banner gets half the window, and wrapping there broke a
+        // sentence over four lines next to the buttons.
+        HStack(spacing: 11) {
+            Image(systemName: isDenied ? "lock.shield.fill" : "questionmark.circle.fill")
+                .foregroundStyle(isDenied ? Theme.junk : Theme.secondaryLabel)
+                .accessibilityHidden(true)
+            message
+                .layoutPriority(-1)
+            Spacer(minLength: 8)
+            // Two actions, in the order they are taken. There used to be a
+            // third, 重新检测, and a disclosure explaining why it never
+            // changed anything: the grant only reaches a process at launch,
+            // so the relaunch is the check.
+            HStack(spacing: 8) {
+                Button("前往设置") { permissions.openSystemSettings() }
+                Button("授权后重启") { permissions.relaunch() }
+                    .buttonStyle(.borderedProminent)
             }
-
-            if isDenied, showingDetail {
-                BannerNote(
-                    "授权后必须重启 App 才会生效 —— macOS 只在进程启动时授予这个权限，"
-                    + "所以在当前进程里点「重新检测」不会变化，这不是检测失败。"
-                    + (permissions.lastCheckedAt.map {
-                        " 上次检测 " + $0.formatted(date: .omitted, time: .standard) + "，仍未获得。"
-                    } ?? "")
-                )
-
-                // Only worth saying on a build that has no stable identity for
-                // TCC to key on —用证书签过名的构建授权本来就能跨重编译保留，
-                // 在那里说这段话只会把人推去做无谓的移除重加。
-                if permissions.grantsExpireOnRebuild {
-                    BannerNote(
-                        "这是 ad-hoc 签名的本地构建：没有证书可以绑定，macOS 只能按可执行文件的哈希记住授权，"
-                        + "而每次重新编译哈希都会变。如果设置里已经有 PureMark 却依然显示未获得，"
-                        + "请先用「−」把它移除，再重新添加当前这份 /Applications/PureMark.app。"
-                        + "改用 make build-selfsigned 可以一劳永逸。",
-                        icon: "exclamationmark.triangle.fill"
-                    )
-                }
-            }
+            .controlSize(.small)
+            .fixedSize()
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 9)
         .background((isDenied ? Theme.junk : Color.secondary).opacity(0.09))
-    }
-
-    private var icon: some View {
-        Image(systemName: isDenied ? "lock.shield.fill" : "questionmark.circle.fill")
-            .foregroundStyle(isDenied ? Theme.junk : Theme.secondaryLabel)
-            .accessibilityHidden(true)
     }
 
     private var headline: String {
@@ -212,128 +174,7 @@ struct PermissionBanner: View {
         }
         .lineLimit(1)
         .truncationMode(.tail)
-        .help(headline + "\n" + explanation)
+        .help(headline + "\n" + explanation + "\n授权在 App 启动时才生效，所以勾选之后需要重启一次。")
         .accessibilityElement(children: .combine)
-    }
-
-    private var actions: some View {
-        HStack(spacing: 8) {
-            Button("重新检测") { permissions.refresh() }
-            Button("前往设置") { permissions.openSystemSettings() }
-            Button("授权后重启") { permissions.relaunch() }
-                .buttonStyle(.borderedProminent)
-
-            if isDenied {
-                Button {
-                    withAnimation(.easeInOut(duration: 0.18)) { showingDetail.toggle() }
-                } label: {
-                    Image(systemName: showingDetail ? "chevron.up" : "chevron.down")
-                        .font(.caption.weight(.semibold))
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
-                .help(showingDetail ? "收起说明" : "授权了还是不行？")
-                .accessibilityLabel(showingDetail ? "收起说明" : "显示说明")
-            }
-        }
-        .controlSize(.small)
-        .fixedSize()
-    }
-}
-
-/// A secondary explanatory line under the banner headline.
-private struct BannerNote: View {
-    let text: String
-    var icon: String = "info.circle"
-
-    init(_ text: String, icon: String = "info.circle") {
-        self.text = text
-        self.icon = icon
-    }
-
-    var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 6) {
-            Image(systemName: icon)
-                .font(.caption)
-                .accessibilityHidden(true)
-            Text(text)
-                .font(.subheadline)
-            Spacer(minLength: 0)
-        }
-        .foregroundStyle(.secondary)
-        .padding(.leading, 25)
-    }
-}
-
-// MARK: - Cleanup summary
-
-/// Shown as an overlay on the junk page after a run.
-struct CleanupSummaryView: View {
-    let summary: ScanViewModel.CleanupSummary
-    @Environment(ScanViewModel.self) private var model
-    @Environment(AppEnvironment.self) private var environment
-    @Environment(\.undoManager) private var undoManager
-    @State private var showSkipped = false
-
-    var body: some View {
-        VStack(spacing: 15) {
-            Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 52))
-                .symbolRenderingMode(.palette)
-                .foregroundStyle(.white, Theme.success)
-                .accessibilityHidden(true)
-                .padding(.bottom, 4)
-
-            Text("已移入隔离区 \(ByteFormat.string(summary.quarantinedBytes))")
-                .font(.largeTitle.weight(.semibold))
-                .monospacedDigit()
-
-            // Says "N 天后释放", not "已回收". The quarantine store is on the
-            // same volume, so nothing has been given back yet — and a user who
-            // checks their free space right now will find it unchanged.
-            Text("\(summary.removedCount) 项。隔离区在同一块磁盘上，"
-                 + "\(environment.settings.retentionDays) 天后自动删除，届时才会真正释放空间。")
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: 420)
-
-            if !summary.skipped.isEmpty {
-                DisclosureGroup(isExpanded: $showSkipped) {
-                    VStack(alignment: .leading, spacing: 5) {
-                        ForEach(summary.skipped, id: \.self) { line in
-                            Text(line)
-                                .font(.callout)
-                                .foregroundStyle(.secondary)
-                                .textSelection(.enabled)
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.top, 6)
-                } label: {
-                    Label("\(summary.skipped.count) 项被跳过", systemImage: "exclamationmark.triangle")
-                }
-                .frame(maxWidth: 420)
-            }
-
-            HStack(spacing: 10) {
-                Button(model.isUndoing ? "正在还原…" : "撤销") {
-                    // Taken here rather than through ⌘Z, so the menu item
-                    // registered for it would undo nothing.
-                    undoManager?.removeAllActions(withTarget: model)
-                    Task { await model.undoLastCleanup() }
-                }
-                .help("把这次移入隔离区的文件放回原处（⌘Z）")
-                .disabled(model.lastCleanup == nil || model.isUndoing)
-                Button("查看隔离区") { environment.showQuarantine = true }
-                Button("完成") { model.dismissSummary() }
-                    .buttonStyle(.borderedProminent)
-                    .keyboardShortcut(.defaultAction)
-            }
-            .controlSize(.large)
-            .padding(.top, 4)
-        }
-        .padding(32)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }

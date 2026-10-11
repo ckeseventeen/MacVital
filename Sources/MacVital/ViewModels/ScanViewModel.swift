@@ -10,7 +10,6 @@ final class ScanViewModel {
         case scanning
         case results
         case cleaning
-        case done(CleanupSummary)
     }
 
     struct CleanupSummary: Equatable {
@@ -24,7 +23,6 @@ final class ScanViewModel {
     private(set) var findings: [Finding] = []
     var selection: Set<UUID> = []
     var enabledCategories: Set<ScanCategory> = Set(ScanCategory.sweepCategories)
-    var focusedCategory: ScanCategory?
     var selectedFindingID: UUID?
     private(set) var progressText: String = ""
     private(set) var progressFraction: Double = 0
@@ -42,6 +40,10 @@ final class ScanViewModel {
         let findings: [Finding]
     }
     private(set) var lastCleanup: LastCleanup?
+    /// What the last cleanup did, shown in place in the action bar until the
+    /// user moves on. It used to be a page of its own that had to be
+    /// dismissed before the list came back.
+    private(set) var lastSummary: CleanupSummary?
     private(set) var isUndoing = false
     /// What an undo could not put back. `nil` when everything went back.
     var undoReport: String?
@@ -60,11 +62,6 @@ final class ScanViewModel {
     var isScanning: Bool { phase == .scanning }
     var isCleaning: Bool { phase == .cleaning }
 
-    var visibleFindings: [Finding] {
-        guard let focusedCategory else { return findings }
-        return findings.filter { $0.item.category == focusedCategory }
-    }
-
     var selectedFinding: Finding? {
         findings.first { $0.id == selectedFindingID }
     }
@@ -82,10 +79,6 @@ final class ScanViewModel {
             .reduce(0) { $0 + $1.item.sizeBytes }
     }
 
-    func count(in category: ScanCategory) -> Int {
-        findings.filter { $0.item.category == category }.count
-    }
-
     // MARK: - Scan
 
     func startScan() async {
@@ -99,6 +92,7 @@ final class ScanViewModel {
         phase = .scanning
         findings = []
         selection = []
+        lastSummary = nil
         errorMessage = nil
         scanWarnings = []
         progressFraction = 0
@@ -223,8 +217,8 @@ final class ScanViewModel {
     /// drift apart on what `requiresExplicitSelection` means — they already had
     /// once, and a global 全选 was quietly ticking every large file and
     /// duplicate the design says must be approved one at a time.
-    func selectAll(in category: ScanCategory?) {
-        selection.formUnion(CleanPlanBuilder.selectAll(in: category, findings: findings))
+    func selectAll() {
+        selection.formUnion(CleanPlanBuilder.selectAll(in: nil, findings: findings))
     }
 
     /// Called only after the user confirms that global selection also includes
@@ -236,16 +230,12 @@ final class ScanViewModel {
     /// Categories the current scope's "select all" deliberately leaves alone,
     /// so the UI can say so rather than looking broken.
     var categoriesNeedingExplicitSelection: [ScanCategory] {
-        guard focusedCategory == nil else { return [] }
-        return Array(Set(findings.filter { $0.isSelectable && $0.item.category.requiresExplicitSelection }
+        Array(Set(findings.filter { $0.isSelectable && $0.item.category.requiresExplicitSelection }
             .map(\.item.category))).sorted { $0.title < $1.title }
     }
 
-    func deselectAll(in category: ScanCategory?) {
-        for finding in findings {
-            guard category == nil || finding.item.category == category else { continue }
-            selection.remove(finding.id)
-        }
+    func deselectAll() {
+        selection = []
     }
 
     /// Reset to what the rules and the model agree on, discarding manual edits.
@@ -293,15 +283,20 @@ final class ScanViewModel {
         // made the whole overview look frozen.
         environment.refreshDiskSpace()
 
-        phase = .done(CleanupSummary(
+        lastSummary = CleanupSummary(
             quarantinedBytes: outcome.quarantinedBytes,
             removedCount: outcome.removed.count,
             skipped: outcome.skipped.map { "\($0.item.displayName)：\($0.reason)" }
-        ))
+        )
+        // Straight back to the list. There is no confirmation step before
+        // this and no summary page after it: everything moved is in the
+        // quarantine for the retention window, and ⌘Z or 撤销 in the action
+        // bar puts it back — an undo is the safety net, not a dialog.
+        phase = .results
     }
 
-    func dismissSummary() {
-        phase = findings.isEmpty ? .idle : .results
+    func dismissLastSummary() {
+        lastSummary = nil
     }
 
     /// Put the last cleanup back — ⌘Z, or the button on the summary.
@@ -316,6 +311,7 @@ final class ScanViewModel {
         isUndoing = true
         defer { isUndoing = false }
         lastCleanup = nil
+        lastSummary = nil
 
         let outcome = await environment.coordinator.undo(last.records)
 
@@ -326,7 +322,7 @@ final class ScanViewModel {
             findings += last.findings.filter {
                 restored.contains($0.item.path) && !present.contains($0.item.path)
             }
-            phase = findings.isEmpty ? .idle : .results
+            phase = .results
         }
         await environment.refreshQuarantine()
         environment.refreshDiskSpace()

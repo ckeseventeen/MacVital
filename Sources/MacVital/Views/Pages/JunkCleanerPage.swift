@@ -17,6 +17,8 @@ struct JunkCleanerPage: View {
     @State private var sortOrder = [KeyPathComparator(\Finding.item.sizeBytes, order: .reverse)]
     @State private var rowSelection = Set<Finding.ID>()
     @State private var confirmingSelectAll = false
+    @State private var showingSkipped = false
+    @Environment(\.undoManager) private var undoManager
     /// Closed until asked for, as in Finder and Mail: open, it takes a third
     /// of a default-sized window to say "select something", and the table
     /// already carries what most rows need in its 说明 column and tooltips.
@@ -27,7 +29,7 @@ struct JunkCleanerPage: View {
             .permissionBannerInset()
             .navigationSubtitle(subtitle)
             .toolbar { toolbar }
-            .searchable(text: $searchText, placement: .toolbar, prompt: "搜索名称、路径或归属")
+            .searchable(text: $searchText, placement: .toolbar, prompt: "搜索名称、类别或路径")
             .inspector(isPresented: inspectorBinding) {
                 inspector
                     .inspectorColumnWidth(min: 240, ideal: 280, max: 420)
@@ -54,7 +56,18 @@ struct JunkCleanerPage: View {
         if model.isScanning {
             scanningState
         } else if model.findings.isEmpty {
-            if model.phase == .results {
+            if let summary = model.lastSummary {
+                // Everything on the list went. The result and the way back
+                // stay on screen instead of an empty "nothing found".
+                ContentUnavailableView {
+                    Label("已移入隔离区 \(ByteFormat.string(summary.quarantinedBytes))", systemImage: "checkmark.circle")
+                } description: {
+                    Text("\(summary.removedCount) 项，\(environment.settings.retentionDays) 天后自动删除，届时才真正释放空间。")
+                } actions: {
+                    undoButton
+                    Button("重新扫描") { Task { await model.startScan() } }
+                }
+            } else if model.phase == .results {
                 ContentUnavailableView {
                     Label("没有发现可清理的内容", systemImage: "checkmark.seal")
                 } description: {
@@ -75,9 +88,10 @@ struct JunkCleanerPage: View {
             }
         } else {
             VStack(spacing: 0) {
-                filterBar
-                if !model.scanWarnings.isEmpty { warnings }
-                Divider()
+                if !model.scanWarnings.isEmpty {
+                    warnings
+                    Divider()
+                }
                 if displayedFindings.isEmpty {
                     ContentUnavailableView.search(text: searchText)
                 } else {
@@ -120,48 +134,26 @@ struct JunkCleanerPage: View {
         .font(.callout)
         .foregroundStyle(.orange)
         .padding(.horizontal, 16)
-        .padding(.bottom, 10)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 10)
+        .frame(minWidth: 0, idealWidth: 0, maxWidth: .infinity, alignment: .leading)
     }
 
     // MARK: - Filtering
 
-    /// Category focus, then search, then the table's sort order — in that
-    /// order, so sorting never has to look at rows that will not be shown.
+    /// Search, then the table's sort order — so sorting never has to look at
+    /// rows that will not be shown. The category name is searchable, which
+    /// is what the row of category chips above the table used to be for; the
+    /// 类别 column sorts by it as well.
     private var displayedFindings: [Finding] {
         let query = searchText.trimmingCharacters(in: .whitespaces)
-        let visible = query.isEmpty ? model.visibleFindings : model.visibleFindings.filter { finding in
+        let visible = query.isEmpty ? model.findings : model.findings.filter { finding in
             finding.item.displayName.localizedStandardContains(query)
                 || finding.item.path.localizedStandardContains(query)
+                || finding.item.category.title.localizedStandardContains(query)
                 || (finding.item.ownerHint?.label?.localizedStandardContains(query) ?? false)
                 || (finding.assessment?.attribution?.localizedStandardContains(query) ?? false)
         }
         return visible.sorted(using: sortOrder)
-    }
-
-    /// One chip per category present in the results. `focusedCategory` drives
-    /// both what the table shows and what 全选 means.
-    private var filterBar: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
-                FilterChip(title: "全部", count: model.findings.count, tint: Theme.accent,
-                           isOn: model.focusedCategory == nil) {
-                    model.focusedCategory = nil
-                }
-                ForEach(presentCategories) { category in
-                    FilterChip(title: category.title, count: model.count(in: category),
-                               tint: category.tint, isOn: model.focusedCategory == category) {
-                        model.focusedCategory = model.focusedCategory == category ? nil : category
-                    }
-                }
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
-        }
-    }
-
-    private var presentCategories: [ScanCategory] {
-        ScanCategory.allCases.filter { model.count(in: $0) > 0 }
     }
 
     // MARK: - Inspector
@@ -272,7 +264,8 @@ struct JunkCleanerPage: View {
     // MARK: - Action bar
 
     /// The summary sits next to the action it summarises, at the bottom edge,
-    /// like Photos' import bar.
+    /// like Photos' import bar — and after a cleanup, the result and its undo
+    /// take the same place until something is ticked again.
     private var actionBar: some View {
         HStack(spacing: 14) {
             if model.isCleaning {
@@ -284,12 +277,14 @@ struct JunkCleanerPage: View {
                 Text("正在移入隔离区 \(model.cleanupProgress.done)/\(model.cleanupProgress.total)")
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
+            } else if model.selection.isEmpty, let summary = model.lastSummary {
+                cleanupResult(summary)
             } else {
                 VStack(alignment: .leading, spacing: 1) {
                     Text("已选 \(ByteFormat.string(model.selectedBytes))")
                         .font(.headline)
                         .monospacedDigit()
-                    Text("\(model.selection.count) 项 · 移入隔离区后 \(environment.settings.retentionDays) 天释放空间")
+                    Text(selectionCaption)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -299,13 +294,20 @@ struct JunkCleanerPage: View {
 
             selectionMenu
 
-            Button("移入隔离区…") {
-                environment.showConfirm = true
+            Button("移入隔离区") {
+                Task { await model.performCleanup() }
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
-            .keyboardShortcut(.return, modifiers: .command)
+            // Deliberately no keyboard shortcut. With the confirmation step
+            // gone, a shortcut would be the whole gate between a keystroke and
+            // moving files: during testing eight folders went into the
+            // quarantine from an input nobody meant for this button, most
+            // likely a ⌘⏎ — the "send" key in chat windows — arriving while
+            // this window had focus. ⌘⌫ is no better: it is also "delete to
+            // line start" in the search field. Undo stays on ⌘Z.
             .disabled(model.selection.isEmpty || model.isCleaning)
+            .help("\(environment.settings.retentionDays) 天内可随时还原，⌘Z 撤销")
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
@@ -313,25 +315,84 @@ struct JunkCleanerPage: View {
         .overlay(alignment: .top) { Divider() }
     }
 
+    private func cleanupResult(_ summary: ScanViewModel.CleanupSummary) -> some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 1) {
+                Label("已移入隔离区 \(ByteFormat.string(summary.quarantinedBytes))", systemImage: "checkmark.circle.fill")
+                    .font(.headline)
+                    .monospacedDigit()
+                    .labelStyle(.titleAndIcon)
+                    .foregroundStyle(Theme.success)
+                Text("\(summary.removedCount) 项 · \(environment.settings.retentionDays) 天后自动删除，届时才释放空间")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            undoButton
+            if !summary.skipped.isEmpty {
+                Button("\(summary.skipped.count) 项被跳过") { showingSkipped = true }
+                    .buttonStyle(.link)
+                    .popover(isPresented: $showingSkipped, arrowEdge: .top) {
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: 6) {
+                                ForEach(summary.skipped, id: \.self) { line in
+                                    Text(line)
+                                        .font(.callout)
+                                        .textSelection(.enabled)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                }
+                            }
+                            .padding(14)
+                        }
+                        .frame(width: 380)
+                        .frame(maxHeight: 320)
+                    }
+            }
+        }
+    }
+
+    private var undoButton: some View {
+        Button(model.isUndoing ? "正在还原…" : "撤销") {
+            // Taken here rather than through ⌘Z, so the menu item registered
+            // for it would undo nothing.
+            undoManager?.removeAllActions(withTarget: model)
+            Task { await model.undoLastCleanup() }
+        }
+        .disabled(model.lastCleanup == nil || model.isUndoing)
+        .help("把刚才移入隔离区的文件放回原处（⌘Z）")
+    }
+
+    /// What pressing the button will do, including the part it cannot.
+    ///
+    /// This used to be said by a confirmation sheet; the one thing from it
+    /// still worth saying before the click is that rows needing the
+    /// privileged helper will be skipped while it is not installed.
+    private var selectionCaption: String {
+        let privileged = model.findings.filter {
+            model.selection.contains($0.id) && $0.decision.admission == .allowWithPrivilege
+        }.count
+        if privileged > 0, environment.helperStatus != .enabled {
+            return "\(model.selection.count) 项 · 其中 \(privileged) 项需要特权助手，当前会跳过"
+        }
+        return "\(model.selection.count) 项 · 移入隔离区后 \(environment.settings.retentionDays) 天释放空间"
+    }
+
     private var selectionMenu: some View {
         Menu("选择") {
-            Button(model.focusedCategory == nil ? "全选" : "全选本类") {
-                if model.focusedCategory == nil, !model.categoriesNeedingExplicitSelection.isEmpty {
-                    confirmingSelectAll = true
+            Button("全选") {
+                if model.categoriesNeedingExplicitSelection.isEmpty {
+                    model.selectAll()
                 } else {
-                    model.selectAll(in: model.focusedCategory)
+                    confirmingSelectAll = true
                 }
             }
-            Button(model.focusedCategory == nil ? "全不选" : "全不选本类") {
-                model.deselectAll(in: model.focusedCategory)
-            }
-            .disabled(model.selection.isEmpty)
+            Button("全不选") { model.deselectAll() }
+                .disabled(model.selection.isEmpty)
             Divider()
             Button("恢复推荐选择") { model.resetToRecommended() }
         }
         .menuStyle(.borderlessButton)
         .fixedSize()
-        .disabled(model.isCleaning)
+        .disabled(model.isCleaning || model.findings.isEmpty)
         .help(selectAllHelp)
     }
 
@@ -348,39 +409,5 @@ struct JunkCleanerPage: View {
 
     private var explicitCategoryNames: String {
         model.categoriesNeedingExplicitSelection.map(\.title).joined(separator: "、")
-    }
-}
-
-// MARK: - Filter chip
-
-private struct FilterChip: View {
-    let title: String
-    let count: Int
-    let tint: Color
-    let isOn: Bool
-    let action: () -> Void
-
-    @State private var isHovering = false
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 4) {
-                Text(title)
-                    .fontWeight(isOn ? .medium : .regular)
-                Text("\(count)")
-                    .monospacedDigit()
-                    .foregroundStyle(isOn ? tint : Color.secondary)
-            }
-            .font(.callout)
-            .foregroundStyle(isOn ? tint : Color.primary)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 4)
-            .background(Capsule().fill(tint.opacity(isOn ? 0.15 : (isHovering ? 0.07 : 0))))
-            .overlay(Capsule().strokeBorder(isOn ? tint.opacity(0.4) : Theme.separator, lineWidth: 0.5))
-            .contentShape(Capsule())
-        }
-        .buttonStyle(.plain)
-        .onHover { isHovering = $0 }
-        .accessibilityAddTraits(isOn ? .isSelected : [])
     }
 }
