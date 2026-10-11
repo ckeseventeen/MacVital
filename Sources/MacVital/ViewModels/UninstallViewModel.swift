@@ -42,6 +42,7 @@ final class UninstallViewModel {
 
     private let environment: AppEnvironment
     private var installedApps: [InstalledAppIndex.App] = []
+    private var appsLoadedAt: Date?
     /// A detached plan can finish after the user has selected another app.
     /// Only the newest generation may publish rows or clear the busy state.
     private var planGeneration = 0
@@ -125,7 +126,17 @@ final class UninstallViewModel {
 
     // MARK: - Loading
 
+    /// Reload the app list if it is older than `maxAge`. Called whenever the
+    /// window comes back to the front, which is when an app may have been
+    /// installed or removed; the age check keeps a quick switch from
+    /// re-reading every bundle in /Applications.
+    func reloadAppsIfStale(maxAge: TimeInterval = 30) {
+        if let loaded = appsLoadedAt, Date().timeIntervalSince(loaded) < maxAge { return }
+        loadApps()
+    }
+
     func loadApps() {
+        appsLoadedAt = Date()
         let index = InstalledAppIndex.build()
         installedApps = index.apps
         let home = PathRedaction.home

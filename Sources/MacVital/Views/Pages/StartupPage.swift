@@ -31,6 +31,13 @@ struct StartupPage: View {
         .searchable(text: $searchText, placement: .toolbar, prompt: "搜索启动项")
         .toolbar { toolbar }
         .task { await model.reload() }
+        // Instead of a refresh button: whatever changed it — an app installed
+        // or removed, a process quit — happened outside this window.
+        .onReceive(NotificationCenter.default.publisher(
+            for: NSApplication.didBecomeActiveNotification
+        )) { _ in
+            Task { await model.reload(preservingSelection: true) }
+        }
         // No error alert here on purpose. There used to be one bound to an
         // `errorMessage` that nothing ever assigned — a modal that could not
         // appear. Per-item failures come back in `outcome.skipped` and are
@@ -84,14 +91,6 @@ struct StartupPage: View {
                 Label("只看失效的", systemImage: "exclamationmark.triangle")
             }
             .help("只显示指向的程序已不存在的启动项")
-
-            Button {
-                Task { await model.reload() }
-            } label: {
-                Label("刷新", systemImage: "arrow.clockwise")
-            }
-            .help("重新读取启动项")
-            .disabled(model.isLoading)
         }
     }
 

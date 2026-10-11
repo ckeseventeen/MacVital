@@ -93,7 +93,11 @@ final class StartupViewModel {
 
     // MARK: - Load
 
-    func reload() async {
+    /// - Parameter preservingSelection: keep the ticks that still apply. A
+    ///   refresh the user did not ask for — coming back to the window — must
+    ///   not throw away what they had ticked; row IDs are plist paths, so they
+    ///   survive the reload.
+    func reload(preservingSelection: Bool = false) async {
         guard !isLoading else { return }
         isLoading = true
         defer { isLoading = false }
@@ -131,7 +135,11 @@ final class StartupViewModel {
         // Nothing is pre-ticked. A startup item that looks dead to us may be
         // the thing the user's workflow depends on, and the orphan filter is
         // already one click away for the unambiguous cases.
-        selection = []
+        if preservingSelection {
+            selection.formIntersection(Set(loaded.filter(\.isSelectable).map(\.id)))
+        } else {
+            selection = []
+        }
     }
 
     // MARK: - Selection

@@ -35,7 +35,6 @@ struct UninstallPage: View {
         }
         .navigationSubtitle(model.apps.isEmpty ? "" : "\(model.apps.count) 个应用")
         .searchable(text: $model.query, placement: .toolbar, prompt: "搜索应用")
-        .toolbar { toolbar }
         .task { model.loadApps() }
         // Quitting the app being uninstalled happens *outside* this window, so
         // coming back to it is the moment to re-check. Without this the plan
@@ -44,6 +43,9 @@ struct UninstallPage: View {
         .onReceive(NotificationCenter.default.publisher(
             for: NSApplication.didBecomeActiveNotification
         )) { _ in
+            // Also the moment an app may have been installed or removed,
+            // which is why the page has no reload button.
+            model.reloadAppsIfStale()
             Task { await model.replan() }
         }
         // No error alert here on purpose. There used to be one bound to an
@@ -110,30 +112,6 @@ struct UninstallPage: View {
         return text
     }
 
-    // MARK: - Toolbar
-
-    @ToolbarContentBuilder
-    private var toolbar: some ToolbarContent {
-        ToolbarItemGroup {
-            Button {
-                model.loadApps()
-                Task { await model.replan() }
-            } label: {
-                Label("重新载入", systemImage: "arrow.clockwise")
-            }
-            .help("重新读取已安装的应用")
-
-            Button {
-                guard let app = model.selectedApp else { return }
-                NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: app.path)])
-            } label: {
-                Label("在访达中显示", systemImage: "folder")
-            }
-            .help("在访达中显示这个应用")
-            .disabled(model.selectedApp == nil)
-        }
-    }
-
     // MARK: - App list
 
     private var appList: some View {
@@ -161,6 +139,11 @@ struct UninstallPage: View {
             }
             .padding(.vertical, 2)
             .tag(app.bundleIdentifier)
+            .contextMenu {
+                Button("在访达中显示") {
+                    NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: app.path)])
+                }
+            }
         }
         .listStyle(.inset)
         .overlay {
