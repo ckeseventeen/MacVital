@@ -14,9 +14,13 @@ final class AnnotationDocument {
     var isEmpty: Bool { objects.isEmpty }
     var canUndo: Bool { !undoStack.isEmpty }
     var canRedo: Bool { !redoStack.isEmpty }
+    /// One per user-visible action, ever. Unlike the undo stack it is never
+    /// capped or rewound, so a watcher can tell a new edit from an undo.
+    private(set) var editCount = 0
 
     /// Call *before* a mutation, once per user-visible action.
     func checkpoint() {
+        editCount += 1
         undoStack.append(objects)
         redoStack.removeAll()
         if undoStack.count > 100 { undoStack.removeFirst() }
@@ -339,6 +343,16 @@ final class AnnotationCanvasView: NSView, NSTextFieldDelegate {
         finishTextEntry()
     }
 
+    /// Escape, explicitly. A text view's own answer to it is completion, which
+    /// left the field open with a suggestion list over the drawing.
+    func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+        guard selector == #selector(NSResponder.cancelOperation(_:)) else { return false }
+        finishTextEntry()
+        return true
+    }
+
+    var isEditingText: Bool { textField != nil }
+
     // MARK: - Commands
 
     func undo() { document.undo(); selectedID = nil; needsDisplay = true; onChange?() }
@@ -393,11 +407,17 @@ final class AnnotationCanvasView: NSView, NSTextFieldDelegate {
     // MARK: - Export
 
     /// Flatten backdrop + annotations into one image, for saving or copying.
+    ///
+    /// Every pixel of the capture is kept, at the capture's own point size.
+    /// The point size used to be set to the pixel count, which made an
+    /// annotated Retina shot a 72-dpi image twice the size of the same shot
+    /// unannotated — pasted into a document, it came out doubled.
     func flattened() -> NSImage? {
         guard let backdrop else { return nil }
         let pixelSize = backdrop.representations.first.map {
             CGSize(width: $0.pixelsWide, height: $0.pixelsHigh)
         } ?? backdrop.size
+        let pointSize = backdrop.size.width > 0 && backdrop.size.height > 0 ? backdrop.size : pixelSize
 
         guard let rep = NSBitmapImageRep(
             bitmapDataPlanes: nil,
@@ -405,18 +425,20 @@ final class AnnotationCanvasView: NSView, NSTextFieldDelegate {
             bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
             colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0
         ) else { return nil }
-        rep.size = pixelSize
+        // The context maps this point size onto the full pixel grid, so
+        // drawing below happens in points and still lands on every pixel.
+        rep.size = pointSize
 
         NSGraphicsContext.saveGraphicsState()
         NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
 
-        let target = CGRect(origin: .zero, size: pixelSize)
+        let target = CGRect(origin: .zero, size: pointSize)
         backdrop.draw(in: target, from: .zero, operation: .copy, fraction: 1)
 
-        // Objects live in view coordinates; scale them onto the pixel grid so
-        // the export matches what the user drew rather than a shrunken copy.
-        let scaleX = pixelSize.width / max(bounds.width, 1)
-        let scaleY = pixelSize.height / max(bounds.height, 1)
+        // Objects live in view coordinates; scale them onto the image so the
+        // export matches what the user drew rather than a shrunken copy.
+        let scaleX = pointSize.width / max(bounds.width, 1)
+        let scaleY = pointSize.height / max(bounds.height, 1)
         let transform = NSAffineTransform()
         transform.scaleX(by: scaleX, yBy: scaleY)
         transform.concat()
@@ -425,7 +447,7 @@ final class AnnotationCanvasView: NSView, NSTextFieldDelegate {
 
         NSGraphicsContext.restoreGraphicsState()
 
-        let image = NSImage(size: pixelSize)
+        let image = NSImage(size: pointSize)
         image.addRepresentation(rep)
         return image
     }

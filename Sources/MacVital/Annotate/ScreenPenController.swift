@@ -42,6 +42,12 @@ final class ScreenPenController: NSObject {
     private var mouseMonitor: Any?
     private var screenObserver: NSObjectProtocol?
     private var maskDragOrigin: CGPoint?
+    /// Which display each undo step belongs to. Undo and redo used to run on
+    /// every canvas at once, so one ⌘Z took back the last stroke on the
+    /// projector *and* the laptop.
+    private var undoOrder = CanvasUndoOrder<CGDirectDisplayID>()
+    /// Set while 清空 runs, so the per-canvas reports become one step.
+    private var isClearing = false
 
     var currentColor: Color { Color(nsColor: Self.palette[colorIndex]) }
 
@@ -92,6 +98,7 @@ final class ScreenPenController: NSObject {
 
         // Drop the ones whose display is gone.
         for index in displayIDs.indices.reversed() where !live.contains(displayIDs[index]) {
+            undoOrder.forget(displayIDs[index])
             windows[index].orderOut(nil)
             windows.remove(at: index)
             canvases.remove(at: index)
@@ -121,7 +128,13 @@ final class ScreenPenController: NSObject {
 
             let canvas = AnnotationCanvasView(frame: frame)
             canvas.autoresizingMask = [.width, .height]
-            canvas.onChange = { [weak self] in self?.refreshUndoState() }
+            canvas.onChange = { [weak self, weak canvas] in
+                guard let self, let canvas else { return }
+                if !self.isClearing {
+                    self.undoOrder.record([id: canvas.document.editCount])
+                }
+                self.refreshUndoState()
+            }
             container.addSubview(canvas)
 
             window.contentView = container
@@ -159,6 +172,7 @@ final class ScreenPenController: NSObject {
         canvases.removeAll()
         focusLayers.removeAll()
         displayIDs.removeAll()
+        undoOrder.reset()
         isActive = false
         canUndo = false
         focusMode = .off
@@ -167,9 +181,40 @@ final class ScreenPenController: NSObject {
 
     // MARK: - Tools
 
-    func undo() { canvases.forEach { $0.undo() } }
-    func redo() { canvases.forEach { $0.redo() } }
-    func clear() { canvases.forEach { $0.clear() } }
+    /// The most recent step, on whichever display it was drawn. Steps whose
+    /// canvas can no longer go back — its own history is capped — are
+    /// skipped rather than eating the keystroke.
+    func undo() {
+        while let group = undoOrder.takeUndo() {
+            let targets = canvases(for: group).filter { $0.document.canUndo }
+            guard !targets.isEmpty else { continue }
+            targets.forEach { $0.undo() }
+            return
+        }
+    }
+
+    func redo() {
+        while let group = undoOrder.takeRedo() {
+            let targets = canvases(for: group).filter { $0.document.canRedo }
+            guard !targets.isEmpty else { continue }
+            targets.forEach { $0.redo() }
+            return
+        }
+    }
+
+    /// Every display at once, and undone the same way.
+    func clear() {
+        isClearing = true
+        canvases.forEach { $0.clear() }
+        isClearing = false
+        var counts: [CGDirectDisplayID: Int] = [:]
+        for (id, canvas) in zip(displayIDs, canvases) { counts[id] = canvas.document.editCount }
+        undoOrder.record(counts)
+    }
+
+    private func canvases(for ids: [CGDirectDisplayID]) -> [AnnotationCanvasView] {
+        ids.compactMap { id in displayIDs.firstIndex(of: id).map { canvases[$0] } }
+    }
 
     private func applyTool() {
         for canvas in canvases {
@@ -209,6 +254,11 @@ final class ScreenPenController: NSObject {
     private func installMonitors() {
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self, self.isActive else { return event }
+            // A text annotation being typed owns its keys. This monitor sees
+            // them first, so esc — meant to finish the text — closed the pen
+            // and threw away the drawing on every display, and ⌘Z undid a
+            // stroke instead of the typing.
+            if event.window?.firstResponder is NSText { return event }
             switch event.keyCode {
             case 53:  // esc — the only guaranteed way out of a screen-filling layer
                 self.stop()

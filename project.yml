@@ -126,6 +126,7 @@ targets:
       - path: Sources/MacVital/Annotate/AnnotationCanvasView.swift
       - path: Sources/MacVital/Annotate/AnnotationPalette.swift
       - path: Sources/MacVital/Annotate/WhiteboardViewModel.swift
+      - path: Sources/MacVital/Annotate/CanvasUndoOrder.swift
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.macvital.MacVitalAppLogicTests

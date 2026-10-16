@@ -75,8 +75,9 @@ final class ScreenRecorder: NSObject {
             let filter = SCContentFilter(display: display, excludingWindows: excluded)
 
             let configuration = SCStreamConfiguration()
-            configuration.width = display.width * 2
-            configuration.height = display.height * 2
+            let scale = Self.pixelScale(of: display)
+            configuration.width = Self.evenPixels(CGFloat(display.width) * scale)
+            configuration.height = Self.evenPixels(CGFloat(display.height) * scale)
             configuration.minimumFrameInterval = CMTime(value: 1, timescale: CMTimeScale(frameRate))
             configuration.showsCursor = showsCursor
             configuration.queueDepth = 6
@@ -99,6 +100,19 @@ final class ScreenRecorder: NSObject {
             state = .idle
             errorMessage = Self.describe(error)
         }
+    }
+
+    /// Backing pixels per point for the display's current mode. This was a
+    /// fixed 2, which encoded a 1x external monitor at four times its real
+    /// pixel count — bigger files and more encoding work for no extra detail.
+    private static func pixelScale(of display: SCDisplay) -> CGFloat {
+        guard let mode = CGDisplayCopyDisplayMode(display.displayID), mode.width > 0 else { return 2 }
+        return max(CGFloat(mode.pixelWidth) / CGFloat(mode.width), 1)
+    }
+
+    /// H.264 wants even dimensions.
+    private static func evenPixels(_ value: CGFloat) -> Int {
+        Int(value.rounded()) & ~1
     }
 
     private func prepareWriter() throws {
