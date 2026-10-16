@@ -62,23 +62,10 @@ public struct DuplicateFileScanner: Scanner {
             // while the summary counts its full size. That is the same class of
             // untruth as the old `reclaimedBytes` — the user checks their free
             // space and the number did not move.
-            let unique = Self.distinctFiles(Array(Set(urls.map(\.path))).map(URL.init(fileURLWithPath:)))
-            guard unique.count > 1 else { continue }
-
-            // Oldest wins, by creation date, exactly as documented. This read
-            // `contentModificationDate`, which is a different question with a
-            // different answer: copying a file usually preserves its mtime
-            // while giving it a fresh birth time, so the two can disagree about
-            // which copy is the original — the one thing this must not get
-            // wrong, since it decides which file survives.
-            let ordered = unique.sorted { lhs, rhs in
-                let l = Self.creationDate(of: lhs) ?? .distantFuture
-                let r = Self.creationDate(of: rhs) ?? .distantFuture
-                if l != r { return l < r }
-                return lhs.path.count < rhs.path.count
-            }
-            let keeper = ordered[0]
-            for duplicate in ordered.dropFirst() {
+            let paths = Array(Set(urls.map(\.path))).map(URL.init(fileURLWithPath:))
+            guard let plan = Self.plan(group: paths) else { continue }
+            let keeper = plan.keeper
+            for duplicate in plan.removable {
                 // Resolved per file, not per group: two copies of the same
                 // bytes can sit under different roots.
                 guard let rule = RuleCatalog.userFileRule(for: duplicate.path, category: category) else { continue }
@@ -199,26 +186,105 @@ public struct DuplicateFileScanner: Scanner {
         }
     }
 
-    /// Collapses paths that are names for the same inode, keeping one each.
+    /// Which file of a byte-identical group stays, and which may go.
     ///
-    /// Deliberately not a claim about APFS clones. A clone is a separate inode
-    /// whose blocks are shared until one side is written, and macOS exposes no
-    /// public way to ask how much of that sharing survives — so a cloned copy
-    /// is reported, and removing it does return less than its stated size. The
-    /// framing above it is at least honest about that: the summary says how
-    /// much moved to quarantine, not how much the volume got back.
+    /// Oldest wins, by creation date, exactly as documented. This read
+    /// `contentModificationDate`, which is a different question with a
+    /// different answer: copying a file usually preserves its mtime while
+    /// giving it a fresh birth time, so the two can disagree about which copy
+    /// is the original — the one thing this must not get wrong, since it
+    /// decides which file survives.
+    ///
+    /// Sorted before collapsing, so a family of hard links or clones is
+    /// represented by its oldest member. Then a file is offered only if
+    /// removing it gives space back on its own: one whose blocks another hard
+    /// link or a full APFS clone still holds frees nothing, and it was being
+    /// offered at full size — Finder's ⌘D makes exactly such a clone.
+    static func plan(group urls: [URL]) -> (keeper: URL, removable: [URL])? {
+        let ordered = urls.sorted { lhs, rhs in
+            let l = creationDate(of: lhs) ?? .distantFuture
+            let r = creationDate(of: rhs) ?? .distantFuture
+            if l != r { return l < r }
+            return lhs.path.count < rhs.path.count
+        }
+        let unique = distinctFiles(ordered)
+        guard unique.count > 1 else { return nil }
+        let removable = unique.dropFirst().filter { url in
+            guard let storage = StorageInfo(path: url.path) else { return true }
+            return !storage.sharesBlocks
+        }
+        return (unique[0], Array(removable))
+    }
+
+    /// Collapses paths that hold the same data, keeping the first of each.
+    ///
+    /// Hard links are one inode; pure APFS clones are separate inodes over one
+    /// data stream, and the clone ID says so. This used to stop at inodes on
+    /// the belief that macOS had no public way to see clone sharing —
+    /// `ATTR_CMNEXT_CLONEID` is exactly that. (A clone that has since been
+    /// written to gets a stream of its own, and so counts as its own file.)
     static func distinctFiles(_ urls: [URL]) -> [URL] {
-        var seen = Set<FileIdentity>()
+        var seen = Set<StorageIdentity>()
         var result: [URL] = []
         for url in urls {
-            guard let identity = FileIdentity(path: url.path) else {
+            guard let storage = StorageInfo(path: url.path) else {
                 // Unreadable: keep it rather than silently dropping a candidate.
                 result.append(url)
                 continue
             }
-            if seen.insert(identity).inserted { result.append(url) }
+            if seen.insert(storage.identity).inserted { result.append(url) }
         }
         return result
+    }
+
+    /// Device plus data stream: the clone ID where the volume tracks clones,
+    /// else the inode. Two paths with the same identity are one set of blocks.
+    struct StorageIdentity: Hashable {
+        let device: dev_t
+        let stream: UInt64
+    }
+
+    struct StorageInfo {
+        let identity: StorageIdentity
+        /// Another name or a full clone holds these blocks too, so removing
+        /// this path alone returns nothing to the volume.
+        let sharesBlocks: Bool
+
+        init?(path: String) {
+            var info = stat()
+            guard lstat(path, &info) == 0 else { return nil }
+            let clone = Self.cloneAttributes(of: path)
+            identity = StorageIdentity(device: info.st_dev, stream: clone?.id ?? UInt64(info.st_ino))
+            sharesBlocks = info.st_nlink > 1 || (clone?.familySize ?? 1) > 1
+        }
+
+        /// `ATTR_CMNEXT_CLONEID` and `ATTR_CMNEXT_CLONE_REFCNT` — the refcount
+        /// counts every full clone including this file. `nil` where the volume
+        /// does not report them.
+        private static func cloneAttributes(of path: String) -> (id: UInt64, familySize: UInt32)? {
+            var request = attrlist()
+            request.bitmapcount = u_short(ATTR_BIT_MAP_COUNT)
+            request.commonattr = attrgroup_t(ATTR_CMN_RETURNED_ATTRS)
+            request.forkattr = attrgroup_t(ATTR_CMNEXT_CLONEID | ATTR_CMNEXT_CLONE_REFCNT)
+
+            // u_int32_t length, attribute_set_t returned, u_int64_t clone ID,
+            // u_int32_t clone refcount — packed, in that order.
+            var buffer = [UInt8](repeating: 0, count: 64)
+            let status = buffer.withUnsafeMutableBytes { raw in
+                getattrlist(path, &request, raw.baseAddress, raw.count,
+                            UInt32(FSOPT_ATTR_CMN_EXTENDED | FSOPT_NOFOLLOW))
+            }
+            guard status == 0 else { return nil }
+            return buffer.withUnsafeBytes { raw in
+                let returned = raw.loadUnaligned(fromByteOffset: 4, as: attribute_set_t.self)
+                let wanted = attrgroup_t(ATTR_CMNEXT_CLONEID | ATTR_CMNEXT_CLONE_REFCNT)
+                guard returned.forkattr & wanted == wanted else { return nil }
+                let offset = 4 + MemoryLayout<attribute_set_t>.size
+                let id = raw.loadUnaligned(fromByteOffset: offset, as: UInt64.self)
+                let familySize = raw.loadUnaligned(fromByteOffset: offset + 8, as: UInt32.self)
+                return id == 0 ? nil : (id, familySize)
+            }
+        }
     }
 
     /// Device plus inode — what actually identifies a file on disk, as opposed

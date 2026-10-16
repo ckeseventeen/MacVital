@@ -101,6 +101,86 @@ final class ScanEngineTests: XCTestCase {
         }
     }
 
+    // MARK: - Nested findings
+
+    private let sandboxRule = CleanupRule(
+        id: "test.sandbox",
+        category: .developerResidue,
+        pattern: "/**",
+        kind: "测试",
+        rationale: "测试用规则",
+        allowedInUserData: true
+    )
+
+    private func folder(_ name: String) throws -> String {
+        let url = sandbox.appendingPathComponent(name, isDirectory: true)
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return ProtectedPaths.normalize(url.path)
+    }
+
+    private func folderItem(path: String, ruleID: String) -> ScanItem {
+        ScanItem(path: path, category: .developerResidue, ruleID: ruleID,
+                 kindHint: "node_modules", sizeBytes: 70, isDirectory: true)
+    }
+
+    private func fileItem(path: String) -> ScanItem {
+        ScanItem(path: path, category: .largeFiles, ruleID: "test.sandbox",
+                 kindHint: "大文件", sizeBytes: 7, isDirectory: false)
+    }
+
+    /// A big file inside a folder that is already on the list was counted
+    /// twice, and the second of the two failed during cleanup.
+    func testFileInsideAListedFolderIsNotListedAgain() async throws {
+        let modules = try folder("project/node_modules")
+        let big = try makeFile("project/node_modules/electron.zip")
+        let result = try await ScanEngine(
+            rules: RuleIndex(rules: [sandboxRule]),
+            quarantineRoot: sandbox.appendingPathComponent("Quarantine").path,
+            scanners: [
+                StubScanner(category: .developerResidue, items: [folderItem(path: modules, ruleID: "test.sandbox")]),
+                StubScanner(category: .largeFiles, items: [fileItem(path: big)]),
+            ]
+        ).scan(categories: [.developerResidue, .largeFiles], progress: { _ in })
+
+        XCTAssertEqual(result.findings.map(\.item.path), [modules])
+    }
+
+    /// A locked folder cannot be removed, so it must not hide the file inside
+    /// that can.
+    func testFileInsideALockedFolderStaysListed() async throws {
+        let modules = try folder("project/node_modules")
+        let big = try makeFile("project/node_modules/electron.zip")
+        let result = try await ScanEngine(
+            rules: RuleIndex(rules: [sandboxRule]),
+            quarantineRoot: sandbox.appendingPathComponent("Quarantine").path,
+            scanners: [
+                // No such rule: the engine denies it, as it would any folder
+                // it cannot vouch for.
+                StubScanner(category: .developerResidue, items: [folderItem(path: modules, ruleID: "test.unknown")]),
+                StubScanner(category: .largeFiles, items: [fileItem(path: big)]),
+            ]
+        ).scan(categories: [.developerResidue, .largeFiles], progress: { _ in })
+
+        XCTAssertEqual(Set(result.findings.map(\.item.path)), [modules, big])
+        XCTAssertEqual(result.deniedCount, 1)
+    }
+
+    /// A sibling that only shares a name prefix is not inside the folder.
+    func testPrefixSiblingIsNotTreatedAsInside() async throws {
+        let modules = try folder("project/node_modules")
+        let sibling = try makeFile("project/node_modules.zip")
+        let result = try await ScanEngine(
+            rules: RuleIndex(rules: [sandboxRule]),
+            quarantineRoot: sandbox.appendingPathComponent("Quarantine").path,
+            scanners: [
+                StubScanner(category: .developerResidue, items: [folderItem(path: modules, ruleID: "test.sandbox")]),
+                StubScanner(category: .largeFiles, items: [fileItem(path: sibling)]),
+            ]
+        ).scan(categories: [.developerResidue, .largeFiles], progress: { _ in })
+
+        XCTAssertEqual(Set(result.findings.map(\.item.path)), [modules, sibling])
+    }
+
     func testDistinctPathsAreAllKept() async throws {
         let first = try makeFile("one.bin")
         let second = try makeFile("two.bin")

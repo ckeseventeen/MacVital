@@ -155,13 +155,9 @@ public struct ScanEngine: Sendable {
             selfProtectedPrefixes: [quarantineRoot]
         )
 
-        var findings: [Finding] = []
-        var deniedCount = 0
-        for item in items {
-            let decision = engine.evaluate(item)
-            if decision.isDenied { deniedCount += 1 }
-            findings.append(Finding(item: item, decision: decision))
-        }
+        var findings = items.map { Finding(item: $0, decision: engine.evaluate($0)) }
+        findings = Self.droppingContainedFindings(findings)
+        let deniedCount = findings.filter(\.decision.isDenied).count
 
         // Explanations, for admissible items only.
         progress(ScanProgress(category: nil, message: "生成说明", fraction: 0.95))
@@ -188,5 +184,28 @@ public struct ScanEngine: Sendable {
             deniedCount: deniedCount,
             warnings: failures.keys.sorted().compactMap { failures[$0] }
         )
+    }
+
+    /// One finding per tree, not only per path.
+    ///
+    /// The large-file scanner walks the user folders whole, so a big file
+    /// inside a `node_modules` or `.build` the developer scanner reported as a
+    /// folder came back twice. It was counted twice in "可回收", and ticking
+    /// both failed the second with "源文件已不存在". The enclosing folder wins —
+    /// unless it is locked, in which case the file inside is still the user's
+    /// only way at that space.
+    static func droppingContainedFindings(_ findings: [Finding]) -> [Finding] {
+        let removableFolders = Set(
+            findings.filter { $0.isSelectable && $0.item.isDirectory }.map(\.item.path)
+        )
+        guard !removableFolders.isEmpty else { return findings }
+        return findings.filter { finding in
+            var parent = (finding.item.path as NSString).deletingLastPathComponent
+            while parent.count > 1 {
+                if removableFolders.contains(parent) { return false }
+                parent = (parent as NSString).deletingLastPathComponent
+            }
+            return true
+        }
     }
 }
