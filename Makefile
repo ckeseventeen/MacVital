@@ -235,12 +235,13 @@ archive: project
 	xcodebuild -project $(PROJECT) -scheme $(SCHEME) -configuration Release \
 		-archivePath $(DERIVED)/PureMark.xcarchive archive
 
-# Regenerate the app icon from Tools/MakeAppIcon.swift. The .appiconset holds
-# only rendered PNGs, so without this the artwork is unreproducible — editing
-# the icon means editing the script, not the images.
+# Regenerate the app icon from Tools/MakeAppIcon.swift: the Icon Composer
+# document (AppIcon.icon, what Xcode 26+ builds from) and the flat .appiconset
+# fallback for older Xcode. Both hold only rendered output, so editing the icon
+# means editing the script, not the images.
 ICONSET := Sources/MacVital/Resources/Assets.xcassets/AppIcon.appiconset
 icon:
-	@swift Tools/MakeAppIcon.swift $(ICONSET)/icon_1024.png
+	@swift Tools/MakeAppIcon.swift
 	@for px in 16 32 64 128 256 512; do \
 		sips -Z $$px $(ICONSET)/icon_1024.png --out $(ICONSET)/icon_$$px.png >/dev/null; \
 	done

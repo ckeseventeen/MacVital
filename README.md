@@ -161,7 +161,7 @@ make test      # 单元测试（独立 scheme，不会构建 App）
 make build     # 编译（ad-hoc 签名，默认 Release）
 make install   # 装到 /Applications；装之前先校验构建产物的签名，不合格就中止
 make run       # 编译并启动
-make icon      # 从脚本重新生成 App 图标
+make icon      # 从脚本重新生成 App 图标（Liquid Glass 的 .icon 需 Xcode 26+，旧版 Xcode 回落到扁平 PNG）
 ```
 
 `make build` 用 **ad-hoc 签名**，不需要任何证书就能跑起来。代价是这样出来的 App **用不了特权助手**——Helper 拿不到 team identifier 会主动退出，这是设计如此。

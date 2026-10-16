@@ -11,7 +11,7 @@ MacVital is a macOS 14+ SwiftUI/AppKit application generated with XcodeGen. Shar
 - `make build` creates an ad-hoc-signed Release build; use `CONFIG=Debug` when needed.
 - `make run` builds and launches the app. The privileged helper is unavailable in ad-hoc builds.
 - `make build-signed` builds with the configured Developer ID; `make verify-signing` validates an app bundle.
-- `make icon` regenerates asset-catalog PNGs from `Tools/MakeAppIcon.swift`.
+- `make icon` regenerates `Sources/MacVital/Resources/AppIcon.icon` (Icon Composer, Liquid Glass) and the fallback asset-catalog PNGs from `Tools/MakeAppIcon.swift`; edit the script, not the images.
 
 Install Xcode 15+ and XcodeGen (`brew install xcodegen`) first.
 
