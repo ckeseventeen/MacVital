@@ -382,6 +382,129 @@ final class QuarantineStoreTests: XCTestCase {
             NSError(domain: NSPOSIXErrorDomain, code: Int(EACCES))
         ))
     }
+
+    // MARK: - Copy fallback that cannot finish
+
+    private func makeFolder(_ name: String, files: [String]) throws -> URL {
+        let folder = sandbox.appendingPathComponent(name, isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        for file in files {
+            try Data(file.utf8).write(to: folder.appendingPathComponent(file))
+        }
+        return folder
+    }
+
+    private func listing(_ folder: URL) throws -> [String] {
+        try FileManager.default.contentsOfDirectory(atPath: folder.path).sorted()
+    }
+
+    private func folderItem(at url: URL) -> ScanItem {
+        ScanItem(
+            path: url.path,
+            category: .developerResidue,
+            ruleID: "dev.nodeModules",
+            kindHint: "测试",
+            sizeBytes: 10,
+            isDirectory: true
+        )
+    }
+
+    /// Removing a directory is not atomic. The rollback used to delete the
+    /// destination after a failed source removal — the one copy that was
+    /// still whole, because the source had already lost part of itself.
+    func testCrossVolumeMoveKeepsTheCopyWhenTheSourceOnlyPartlyDeletes() throws {
+        let source = try makeFolder("project", files: ["a.txt", "b.txt"])
+        let destination = sandbox.appendingPathComponent("copy", isDirectory: true)
+        let disk = CrossVolumeFileManager()
+        disk.halfRemove = [source.path]
+
+        XCTAssertThrowsError(
+            try QuarantineStore.moveOrCopy(from: source, to: destination, fileManager: disk)
+        ) { error in
+            guard case QuarantineError.sourceNotRemoved = error else {
+                return XCTFail("unexpected error: \(error)")
+            }
+        }
+        XCTAssertEqual(try listing(source), ["b.txt"], "fixture: the source really is half gone")
+        XCTAssertEqual(try listing(destination), ["a.txt", "b.txt"], "the only complete copy must survive")
+    }
+
+    func testStoreKeepsTheCompleteCopyAsAnOrphanWhenTheSourceOnlyPartlyDeletes() async throws {
+        let source = try makeFolder("node_modules", files: ["a.txt", "b.txt"])
+        let disk = CrossVolumeFileManager()
+        disk.halfRemove = [source.path]
+        let store = QuarantineStore(
+            root: sandbox.appendingPathComponent("CrossVolume"),
+            retentionDaysProvider: { 7 },
+            fileManager: disk
+        )
+
+        do {
+            _ = try await store.store(
+                item: folderItem(at: source),
+                decision: .allow("dev.nodeModules", "test"),
+                assessment: nil
+            )
+            XCTFail("a move that left the source behind must not report success")
+        } catch {}
+
+        // Not a record — the timer could purge a record while the original
+        // is incomplete — but still findable from the quarantine screen.
+        let records = await store.allRecords()
+        XCTAssertTrue(records.isEmpty)
+        let orphans = await store.orphanedContainers()
+        XCTAssertEqual(orphans.count, 1)
+        let kept = URL(fileURLWithPath: try XCTUnwrap(orphans.first).path)
+            .appendingPathComponent("node_modules")
+        XCTAssertEqual(try listing(kept), ["a.txt", "b.txt"])
+    }
+
+    func testRestoreByCopyCompletesWhenTheStoredCopyOnlyPartlyDeletes() async throws {
+        let source = try makeFolder("build", files: ["a.txt", "b.txt"])
+        let disk = CrossVolumeFileManager()
+        let store = QuarantineStore(
+            root: sandbox.appendingPathComponent("CrossVolume"),
+            retentionDaysProvider: { 7 },
+            fileManager: disk
+        )
+        let record = try await store.store(
+            item: folderItem(at: source),
+            decision: .allow("dev.nodeModules", "test"),
+            assessment: nil
+        )
+        XCTAssertFalse(FileManager.default.fileExists(atPath: source.path))
+
+        disk.halfRemove = [record.storedPath]
+        try await store.restore(id: record.id)
+
+        XCTAssertEqual(try listing(source), ["a.txt", "b.txt"], "the original is back, whole")
+        let records = await store.allRecords()
+        XCTAssertTrue(records.isEmpty, "the restore happened, so the record goes")
+        XCTAssertFalse(
+            FileManager.default.fileExists(atPath: URL(fileURLWithPath: record.storedPath).deletingLastPathComponent().path),
+            "the partial leftover is cleared with its container"
+        )
+    }
+}
+
+/// A destination on the far side of a volume boundary: every move is EXDEV,
+/// so the store falls back to copy + remove. A path in `halfRemove` loses one
+/// child and then refuses, the way `removeItem` leaves a directory it could
+/// not finish.
+private final class CrossVolumeFileManager: FileManager {
+    var halfRemove: Set<String> = []
+
+    override func moveItem(at srcURL: URL, to dstURL: URL) throws {
+        throw NSError(domain: NSPOSIXErrorDomain, code: Int(EXDEV))
+    }
+
+    override func removeItem(at url: URL) throws {
+        guard halfRemove.contains(url.path) else { return try super.removeItem(at: url) }
+        if let first = try super.contentsOfDirectory(atPath: url.path).sorted().first {
+            try super.removeItem(at: url.appendingPathComponent(first))
+        }
+        throw NSError(domain: NSPOSIXErrorDomain, code: Int(EACCES))
+    }
 }
 
 /// A retention value the test can change between calls, standing in for the

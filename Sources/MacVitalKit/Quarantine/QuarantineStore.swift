@@ -25,6 +25,9 @@ public actor QuarantineStore {
     /// on promising "N 天后才清除" with the *new* number. Reading it at the
     /// moment an expiry is stamped is the only version of this that is true.
     private let retentionDays: @Sendable () -> Int
+    /// Only the payload moves go through this, so tests can stand in a disk
+    /// that fails halfway through a cross-volume move.
+    private let fileManager: FileManager
     private var records: [QuarantineRecord] = []
     private var loaded = false
     /// Non-nil when the manifest exists but could not be decoded. Latches for
@@ -32,6 +35,10 @@ public actor QuarantineStore {
     private var manifestUnreadable: String?
 
     public init(root: URL? = nil, retentionDaysProvider: @escaping @Sendable () -> Int) {
+        self.init(root: root, retentionDaysProvider: retentionDaysProvider, fileManager: .default)
+    }
+
+    init(root: URL?, retentionDaysProvider: @escaping @Sendable () -> Int, fileManager: FileManager) {
         let base = root ?? FileManager.default
             .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("MacVital", isDirectory: true)
@@ -40,6 +47,7 @@ public actor QuarantineStore {
         self.itemsDirectory = base.appendingPathComponent("Items", isDirectory: true)
         self.manifestURL = base.appendingPathComponent("manifest.json")
         self.retentionDays = retentionDaysProvider
+        self.fileManager = fileManager
     }
 
     /// Fixed-window convenience, for tests and for callers with no setting to
@@ -184,8 +192,18 @@ public actor QuarantineStore {
                 destination = landed
             } else {
                 try FileManager.default.createDirectory(at: container, withIntermediateDirectories: false)
-                try moveOrCopy(from: source, to: destination)
+                try Self.moveOrCopy(from: source, to: destination, fileManager: fileManager)
             }
+        } catch QuarantineError.sourceNotRemoved(let detail) {
+            // The container holds the only complete copy now: the original
+            // may be half deleted. It stays, as an orphan the quarantine
+            // screen lists and can reveal — not as a record, because a record
+            // could be purged on the timer while the original is incomplete.
+            Log.quarantine.error("\(Log.path(item.path), privacy: .public) copied but not removed; complete copy kept in \(container.lastPathComponent, privacy: .public)")
+            throw QuarantineError.moveFailed(
+                "已完整复制到隔离区，但原位置没能删干净（\(detail)）。"
+                + "完整副本保留在隔离区的「无主项目」里，请核对原位置后再处理。"
+            )
         } catch {
             if decision.admission != .allowWithPrivilege {
                 try? FileManager.default.removeItem(at: container)
@@ -226,7 +244,11 @@ public actor QuarantineStore {
             var movedBack = false
             if decision.admission != .allowWithPrivilege {
                 do {
-                    try moveOrCopy(from: destination, to: source)
+                    try Self.moveOrCopy(from: destination, to: source, fileManager: fileManager)
+                    movedBack = true
+                } catch QuarantineError.sourceNotRemoved {
+                    // The original path has its complete copy back; what is
+                    // left in the container is a partial duplicate.
                     movedBack = true
                 } catch {
                     Log.quarantine.error("could not move \(Log.path(item.path), privacy: .public) back: \(error.localizedDescription, privacy: .public)")
@@ -284,7 +306,13 @@ public actor QuarantineStore {
                 try await privilegedMove(stored.path, original.path)
             } else {
                 try? FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
-                try moveOrCopy(from: stored, to: original)
+                do {
+                    try Self.moveOrCopy(from: stored, to: original, fileManager: fileManager)
+                } catch QuarantineError.sourceNotRemoved(let detail) {
+                    // The original path holds a complete copy, so the restore
+                    // happened. The leftover in the container goes below.
+                    Log.quarantine.notice("restored \(Log.path(record.originalPath), privacy: .public) by copy; stored copy not fully removed: \(detail, privacy: .public)")
+                }
             }
         } catch {
             clearPendingOperation(for: id)
@@ -577,8 +605,13 @@ public actor QuarantineStore {
 
     /// `moveItem` fails across volumes (EXDEV). Fall back to copy + remove so
     /// an external disk does not break the flow.
-    private nonisolated func moveOrCopy(from source: URL, to destination: URL) throws {
-        let fm = FileManager.default
+    ///
+    /// Throws `sourceNotRemoved` when the copy completed but the source could
+    /// not then be removed. The destination is kept in that case, and callers
+    /// must keep it too: removing a directory is not atomic, so a source that
+    /// failed to delete may already be missing part of its contents, and the
+    /// destination is the only copy known to be whole.
+    static func moveOrCopy(from source: URL, to destination: URL, fileManager fm: FileManager) throws {
         do {
             try fm.moveItem(at: source, to: destination)
             return
@@ -601,11 +634,11 @@ public actor QuarantineStore {
         do {
             try fm.removeItem(at: source)
         } catch {
-            // Keep the operation on its original side when the delete half of
-            // copy-and-remove fails. If rollback itself is refused, both
-            // copies survive; duplication is safer than deleting either one.
-            try? fm.removeItem(at: destination)
-            throw QuarantineError.moveFailed(error.localizedDescription)
+            // This used to roll back by deleting the destination. For a
+            // directory that deleted the only complete copy: `removeItem`
+            // had already taken part of the source before it failed.
+            // Duplication is safer than deleting either one.
+            throw QuarantineError.sourceNotRemoved(error.localizedDescription)
         }
     }
 

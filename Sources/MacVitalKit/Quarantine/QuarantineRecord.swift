@@ -138,6 +138,10 @@ public enum QuarantineError: LocalizedError {
     /// while this holds — see `QuarantineStore.loadIfNeeded`.
     case manifestUnreadable(String)
     case manifestWriteFailed(String)
+    /// A cross-volume move copied everything but could not remove the
+    /// source afterwards. The copy is complete and must be kept; the source
+    /// may be partly deleted. See `QuarantineStore.moveOrCopy`.
+    case sourceNotRemoved(String)
 
     public var errorDescription: String? {
         switch self {
@@ -152,6 +156,8 @@ public enum QuarantineError: LocalizedError {
             return "隔离区清单损坏，已停止写入以免丢失既有记录：\(detail)"
         case .manifestWriteFailed(let detail):
             return "隔离区清单写入失败：\(detail)"
+        case .sourceNotRemoved(let detail):
+            return "已复制但未能删除原文件：\(detail)"
         }
     }
 }
