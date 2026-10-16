@@ -105,6 +105,7 @@ final class AppEnvironment {
     /// Re-running the launch sequence on every reopen would re-sweep the
     /// quarantine and re-probe permissions for no reason.
     @ObservationIgnored private var didBootstrap = false
+    @ObservationIgnored private var sweepTask: Task<Void, Never>?
 
     func bootstrap() async {
         guard !didBootstrap else { return }
@@ -124,6 +125,29 @@ final class AppEnvironment {
             Log.app.info("purged \(purged, privacy: .public) expired quarantine records on launch")
         }
         await refreshQuarantine()
+        startPeriodicSweep()
+    }
+
+    /// The same sweep, hourly, for as long as the process lives.
+    ///
+    /// Launch alone was not enough: background residency is on by default,
+    /// so the app can run for weeks without relaunching, and records went on
+    /// sitting in the quarantine long after the "N 天后自动删除" they were
+    /// promised. The sleep is on the continuous clock, so time the Mac spends
+    /// asleep counts and an overdue sweep runs shortly after it wakes.
+    private func startPeriodicSweep() {
+        guard sweepTask == nil else { return }
+        sweepTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(60 * 60))
+                guard let self else { return }
+                let purged = await self.coordinator.sweepExpired()
+                guard purged > 0 else { continue }
+                Log.app.info("purged \(purged, privacy: .public) expired quarantine records")
+                await self.refreshQuarantine()
+                self.refreshDiskSpace()
+            }
+        }
     }
 
     // MARK: - Menu bar

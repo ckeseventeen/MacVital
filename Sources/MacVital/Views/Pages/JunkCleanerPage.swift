@@ -306,7 +306,7 @@ struct JunkCleanerPage: View {
             // likely a ⌘⏎ — the "send" key in chat windows — arriving while
             // this window had focus. ⌘⌫ is no better: it is also "delete to
             // line start" in the search field. Undo stays on ⌘Z.
-            .disabled(model.selection.isEmpty || model.isCleaning)
+            .disabled(model.selection.isEmpty || model.isCleaning || model.isUndoing)
             .help("\(environment.settings.retentionDays) 天内可随时还原，⌘Z 撤销")
         }
         .padding(.horizontal, 16)

@@ -30,6 +30,10 @@ struct RootView: View {
             // manager, so ⌘Z and the menu item come from the system.
             .onChange(of: model.lastCleanup?.id) { _, id in
                 guard id != nil, let undoManager else { return }
+                // Only the newest cleanup can be undone — the model keeps one.
+                // Stacking an entry per cleanup left 撤销「移入隔离区」 in the
+                // Edit menu after the first ⌘Z, pointing at nothing.
+                undoManager.removeAllActions(withTarget: model)
                 undoManager.registerUndo(withTarget: model) { model in
                     Task { @MainActor in await model.undoLastCleanup() }
                 }

@@ -36,6 +36,9 @@ struct StartupPage: View {
         .onReceive(NotificationCenter.default.publisher(
             for: NSApplication.didBecomeActiveNotification
         )) { _ in
+            // A removal ends with its own reload; one started mid-removal
+            // would only show the list half-moved.
+            guard !model.isRemoving else { return }
             Task { await model.reload(preservingSelection: true) }
         }
         // No error alert here on purpose. There used to be one bound to an

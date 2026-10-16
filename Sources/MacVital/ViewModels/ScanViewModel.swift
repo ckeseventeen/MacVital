@@ -246,7 +246,10 @@ final class ScanViewModel {
     // MARK: - Clean
 
     func performCleanup() async {
-        guard phase == .results, !selection.isEmpty else { return }
+        // Not while an undo is putting files back: the undo ends by setting
+        // the phase itself, which would drop this cleanup out of `.cleaning`
+        // halfway through and re-enable scanning over it.
+        guard phase == .results, !isUndoing, !selection.isEmpty else { return }
         scanGeneration += 1 // Invalidate any revalidation still evaluating old rows.
         phase = .cleaning
         cleanupProgress = (0, selection.count)
@@ -316,13 +319,15 @@ final class ScanViewModel {
         let outcome = await environment.coordinator.undo(last.records)
 
         // A scan in flight is rebuilding the list; let it find them itself.
+        // A scan that started *and finished* during the await has already
+        // done so, and the dedupe below keeps its rows.
         if !isScanning {
             let restored = Set(outcome.restored.map(\.originalPath))
             let present = Set(findings.map(\.item.path))
             findings += last.findings.filter {
                 restored.contains($0.item.path) && !present.contains($0.item.path)
             }
-            phase = .results
+            if phase == .idle { phase = .results }
         }
         await environment.refreshQuarantine()
         environment.refreshDiskSpace()

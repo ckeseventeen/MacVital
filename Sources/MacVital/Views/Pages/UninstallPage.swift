@@ -35,7 +35,7 @@ struct UninstallPage: View {
         }
         .navigationSubtitle(model.apps.isEmpty ? "" : "\(model.apps.count) 个应用")
         .searchable(text: $model.query, placement: .toolbar, prompt: "搜索应用")
-        .task { model.loadApps() }
+        .task { await model.loadApps() }
         // Quitting the app being uninstalled happens *outside* this window, so
         // coming back to it is the moment to re-check. Without this the plan
         // keeps reporting a process that exited minutes ago, and the lock looks
@@ -45,8 +45,10 @@ struct UninstallPage: View {
         )) { _ in
             // Also the moment an app may have been installed or removed,
             // which is why the page has no reload button.
-            model.reloadAppsIfStale()
-            Task { await model.replan() }
+            Task {
+                await model.reloadAppsIfStale()
+                await model.replan()
+            }
         }
         // No error alert here on purpose. There used to be one bound to an
         // `errorMessage` that nothing ever assigned — a modal that could not

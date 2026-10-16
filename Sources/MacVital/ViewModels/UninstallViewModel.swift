@@ -43,6 +43,9 @@ final class UninstallViewModel {
     private let environment: AppEnvironment
     private var installedApps: [InstalledAppIndex.App] = []
     private var appsLoadedAt: Date?
+    /// A slow index that finishes after a newer one must not publish an
+    /// older list over it.
+    private var appsGeneration = 0
     /// A detached plan can finish after the user has selected another app.
     /// Only the newest generation may publish rows or clear the busy state.
     private var planGeneration = 0
@@ -130,14 +133,23 @@ final class UninstallViewModel {
     /// window comes back to the front, which is when an app may have been
     /// installed or removed; the age check keeps a quick switch from
     /// re-reading every bundle in /Applications.
-    func reloadAppsIfStale(maxAge: TimeInterval = 30) {
+    func reloadAppsIfStale(maxAge: TimeInterval = 30) async {
         if let loaded = appsLoadedAt, Date().timeIntervalSince(loaded) < maxAge { return }
-        loadApps()
+        await loadApps()
     }
 
-    func loadApps() {
+    /// Builds the index off the main actor. It reads every bundle's
+    /// Info.plist under /Applications, ~/Downloads and ~/Desktop and lists
+    /// each mounted volume's root — a network share there can take seconds to
+    /// answer — and it runs every time the window comes back to the front.
+    func loadApps() async {
         appsLoadedAt = Date()
-        let index = InstalledAppIndex.build()
+        appsGeneration += 1
+        let generation = appsGeneration
+        let index = await Task.detached(priority: .userInitiated) {
+            InstalledAppIndex.build()
+        }.value
+        guard appsGeneration == generation else { return }
         installedApps = index.apps
         let home = PathRedaction.home
         // Only what the user can actually remove: /Applications and
@@ -369,7 +381,17 @@ final class UninstallViewModel {
     // MARK: - Execute
 
     func uninstall() async {
-        guard !isRemoving, !isPlanning, !selection.isEmpty else { return }
+        guard !isRemoving, !selection.isEmpty else { return }
+        // A re-plan can be in flight — coming back to the window starts one —
+        // when the user confirms. Bailing out here made the confirmed button
+        // do nothing at all. Act on the rows the user confirmed instead and
+        // drop the stale plan: the coordinator re-evaluates every item
+        // against the disk before moving it, so nothing is lost by not
+        // waiting.
+        if isPlanning {
+            planGeneration += 1
+            isPlanning = false
+        }
         isRemoving = true
         defer { isRemoving = false }
 
@@ -393,7 +415,7 @@ final class UninstallViewModel {
         // Re-plan so the sheet shows what is actually left rather than a stale
         // list of paths that no longer exist.
         if let app = selectedApp {
-            loadApps()
+            await loadApps()
             let previousSummary = summary
             await plan(for: app, preservingSelection: true)
             summary = previousSummary

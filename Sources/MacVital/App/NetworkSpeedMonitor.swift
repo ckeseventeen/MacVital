@@ -60,7 +60,10 @@ final class NetworkSpeedMonitor {
 
     private func tick() {
         let now = CFAbsoluteTimeGetCurrent()
-        let sample = Self.read()
+        // A failed read skips the second and keeps the last good baseline.
+        // It used to count as all-zero counters, and the next good read then
+        // differenced every byte since boot into a single "second".
+        guard let sample = Self.read() else { return }
         defer {
             previous = sample
             previousTime = now
@@ -82,16 +85,19 @@ final class NetworkSpeedMonitor {
 
     // MARK: - Kernel counters
 
-    private static func read() -> Sample {
+    /// `nil` when the kernel would not hand over the table — most often
+    /// ENOMEM, because an interface (a VPN coming up) appeared between the
+    /// size query and the read.
+    private static func read() -> Sample? {
         var mib: [Int32] = [CTL_NET, PF_ROUTE, 0, 0, NET_RT_IFLIST2, 0]
         var length = 0
         guard sysctl(&mib, u_int(mib.count), nil, &length, nil, 0) == 0, length > 0 else {
-            return Sample()
+            return nil
         }
 
         var buffer = [UInt8](repeating: 0, count: length)
         guard sysctl(&mib, u_int(mib.count), &buffer, &length, nil, 0) == 0 else {
-            return Sample()
+            return nil
         }
 
         return buffer.withUnsafeBytes { raw in

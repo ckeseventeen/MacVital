@@ -54,6 +54,10 @@ final class StartupViewModel {
     var showOnlyOrphaned = false
 
     private let environment: AppEnvironment
+    /// Only the newest reload may publish rows or clear `isLoading`. A reload
+    /// that began before a removal describes the disk as it was, and landing
+    /// after it would put the removed rows back on screen.
+    private var loadGeneration = 0
 
     init(environment: AppEnvironment) {
         self.environment = environment
@@ -98,9 +102,12 @@ final class StartupViewModel {
     ///   not throw away what they had ticked; row IDs are plist paths, so they
     ///   survive the reload.
     func reload(preservingSelection: Bool = false) async {
-        guard !isLoading else { return }
+        loadGeneration += 1
+        let generation = loadGeneration
         isLoading = true
-        defer { isLoading = false }
+        defer {
+            if loadGeneration == generation { isLoading = false }
+        }
 
         let rules = environment.rules
         let quarantineRoot = environment.quarantineRoot
@@ -131,6 +138,7 @@ final class StartupViewModel {
             }
         }.value
 
+        guard loadGeneration == generation else { return }
         rows = loaded
         // Nothing is pre-ticked. A startup item that looks dead to us may be
         // the thing the user's workflow depends on, and the orphan filter is
@@ -183,7 +191,9 @@ final class StartupViewModel {
         case .closed:
             stopMessage = "已结束「\(row.item.displayName)」。"
                 + (row.isSelectable ? "它下次登录时仍会启动，除非一并停用。" : "")
-            await reload()
+            // Stopping one process is not a reason to drop what else the
+            // user had ticked — the message even suggests disabling next.
+            await reload(preservingSelection: true)
             return true
         case .stillRunning:
             stopMessage = nil
@@ -225,7 +235,12 @@ final class StartupViewModel {
     /// retention window, and the operation goes through the same rule engine
     /// and privileged helper as every other removal.
     func disableSelected() async {
-        guard !isRemoving, !isLoading, !selection.isEmpty else { return }
+        // Not gated on `isLoading`: coming back to the window starts a reload,
+        // and a confirmation that landed during it used to do nothing at all.
+        // The rows the user confirmed are the ones acted on; the coordinator
+        // re-evaluates each against the disk, and the reload below supersedes
+        // whatever was in flight.
+        guard !isRemoving, !selection.isEmpty else { return }
         isRemoving = true
         defer { isRemoving = false }
 
